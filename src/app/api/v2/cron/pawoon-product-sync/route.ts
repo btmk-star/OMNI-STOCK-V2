@@ -17,9 +17,8 @@ import { startTimer, unauthorizedResponse, verifyCronAuth } from '../_helpers';
 
 const WORKFLOW = '[WF-01] Pawoon Product Sync';
 const BATCH_SIZE = 500;
-// Pawoon kasih default 100/page. Naikkan ke 200 untuk kurangi pagination calls,
-// jadi total runtime turun ~half. Tetap aman per Pawoon limits.
-const PAGE_SIZE = 200;
+// Pawoon API limit: per_page max 100 (verified via 400 response).
+const PAGE_SIZE = 100;
 
 export const dynamic = 'force-dynamic';
 export const maxDuration = 60; // Vercel Hobby max — strict.
