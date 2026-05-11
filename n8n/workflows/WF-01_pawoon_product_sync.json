@@ -1,0 +1,195 @@
+{
+  "name": "[WF-01] Pawoon — Product Sync",
+  "nodes": [
+    {
+      "parameters": {
+        "rule": {
+          "interval": [{ "field": "minutes", "minutesInterval": 15 }]
+        }
+      },
+      "id": "trigger-cron",
+      "name": "CRON every 15 min",
+      "type": "n8n-nodes-base.scheduleTrigger",
+      "typeVersion": 1,
+      "position": [220, 320]
+    },
+    {
+      "parameters": {
+        "values": {
+          "number": [
+            { "name": "page", "value": 1 },
+            { "name": "perPage", "value": 100 }
+          ],
+          "boolean": [{ "name": "hasMore", "value": true }],
+          "string": [
+            {
+              "name": "startedAt",
+              "value": "={{ $now.toISO() }}"
+            }
+          ]
+        },
+        "options": {}
+      },
+      "id": "init-state",
+      "name": "INIT pagination state",
+      "type": "n8n-nodes-base.set",
+      "typeVersion": 3,
+      "position": [440, 320]
+    },
+    {
+      "parameters": {
+        "method": "GET",
+        "url": "={{ $env.PAWOON_API_BASE_URL }}/products",
+        "authentication": "predefinedCredentialType",
+        "nodeCredentialType": "oAuth2Api",
+        "sendQuery": true,
+        "queryParameters": {
+          "parameters": [
+            { "name": "page", "value": "={{ $json.page }}" },
+            { "name": "per_page", "value": "={{ $json.perPage }}" }
+          ]
+        },
+        "options": {
+          "timeout": 30000,
+          "retry": { "enabled": true, "maxTries": 3 }
+        }
+      },
+      "id": "get-products",
+      "name": "GET Products from Pawoon",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4,
+      "position": [680, 320],
+      "credentials": {
+        "oAuth2Api": { "id": "REPLACE_PAWOON_CRED_ID", "name": "Pawoon API - Production" }
+      },
+      "retryOnFail": true,
+      "maxTries": 3,
+      "waitBetweenTries": 1000
+    },
+    {
+      "parameters": {
+        "jsCode": "const items = $input.first().json.data || [];\nreturn items.map((p) => ({\n  json: {\n    pawoon_id: String(p.id),\n    name: p.name,\n    category_name: p.category?.name || null,\n    pawoon_category_id: p.category?.id ? String(p.category.id) : null,\n    price: Number(p.price || 0),\n    sku: p.sku || null,\n    barcode: p.barcode || null,\n    is_sold: p.is_sold !== false,\n    outlet_ids: Array.isArray(p.outlet_ids) ? p.outlet_ids : [],\n    raw_data: p,\n    synced_at: new Date().toISOString()\n  }\n}));"
+      },
+      "id": "map-products",
+      "name": "MAP Pawoon → pawoon_products",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [920, 320]
+    },
+    {
+      "parameters": {
+        "operation": "upsert",
+        "tableId": "pawoon_products",
+        "matchingColumns": "pawoon_id",
+        "fieldsUi": {
+          "fieldValues": [
+            { "fieldId": "pawoon_id", "fieldValue": "={{ $json.pawoon_id }}" },
+            { "fieldId": "name", "fieldValue": "={{ $json.name }}" },
+            { "fieldId": "category_name", "fieldValue": "={{ $json.category_name }}" },
+            { "fieldId": "pawoon_category_id", "fieldValue": "={{ $json.pawoon_category_id }}" },
+            { "fieldId": "price", "fieldValue": "={{ $json.price }}" },
+            { "fieldId": "sku", "fieldValue": "={{ $json.sku }}" },
+            { "fieldId": "barcode", "fieldValue": "={{ $json.barcode }}" },
+            { "fieldId": "is_sold", "fieldValue": "={{ $json.is_sold }}" },
+            { "fieldId": "outlet_ids", "fieldValue": "={{ $json.outlet_ids }}" },
+            { "fieldId": "raw_data", "fieldValue": "={{ $json.raw_data }}" },
+            { "fieldId": "synced_at", "fieldValue": "={{ $json.synced_at }}" }
+          ]
+        }
+      },
+      "id": "upsert-products",
+      "name": "UPSERT to pawoon_products",
+      "type": "n8n-nodes-base.supabase",
+      "typeVersion": 1,
+      "position": [1180, 320],
+      "credentials": {
+        "supabaseApi": {
+          "id": "REPLACE_SUPABASE_CRED_ID",
+          "name": "Supabase - Service Role"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "jsCode": "const meta = $input.first().json.meta || {};\nconst current = $('INIT pagination state').first().json.page;\nconst totalPages = meta.last_page || meta.total_pages || 1;\nconst hasMore = current < totalPages;\nreturn [{\n  json: {\n    page: current + 1,\n    perPage: 100,\n    hasMore,\n    totalPages,\n    startedAt: $('INIT pagination state').first().json.startedAt\n  }\n}];"
+      },
+      "id": "next-page",
+      "name": "CHECK more pages",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [1440, 320]
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "boolean": [{ "value1": "={{ $json.hasMore }}", "value2": true }]
+        }
+      },
+      "id": "if-more",
+      "name": "IF hasMore",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 1,
+      "position": [1680, 320]
+    },
+    {
+      "parameters": {
+        "operation": "insert",
+        "tableId": "pawoon_sync_log",
+        "fieldsUi": {
+          "fieldValues": [
+            { "fieldId": "workflow", "fieldValue": "[WF-01] Pawoon Product Sync" },
+            { "fieldId": "table_name", "fieldValue": "pawoon_products" },
+            {
+              "fieldId": "records_synced",
+              "fieldValue": "={{ ($('UPSERT to pawoon_products').all() || []).length }}"
+            },
+            {
+              "fieldId": "duration_ms",
+              "fieldValue": "={{ Date.now() - new Date($('INIT pagination state').first().json.startedAt).getTime() }}"
+            },
+            { "fieldId": "status", "fieldValue": "success" },
+            { "fieldId": "synced_at", "fieldValue": "={{ $now.toISO() }}" }
+          ]
+        }
+      },
+      "id": "log-success",
+      "name": "LOG sync success",
+      "type": "n8n-nodes-base.supabase",
+      "typeVersion": 1,
+      "position": [1940, 460],
+      "credentials": {
+        "supabaseApi": {
+          "id": "REPLACE_SUPABASE_CRED_ID",
+          "name": "Supabase - Service Role"
+        }
+      }
+    }
+  ],
+  "connections": {
+    "CRON every 15 min": { "main": [[{ "node": "INIT pagination state", "type": "main", "index": 0 }]] },
+    "INIT pagination state": { "main": [[{ "node": "GET Products from Pawoon", "type": "main", "index": 0 }]] },
+    "GET Products from Pawoon": { "main": [[{ "node": "MAP Pawoon → pawoon_products", "type": "main", "index": 0 }]] },
+    "MAP Pawoon → pawoon_products": { "main": [[{ "node": "UPSERT to pawoon_products", "type": "main", "index": 0 }]] },
+    "UPSERT to pawoon_products": { "main": [[{ "node": "CHECK more pages", "type": "main", "index": 0 }]] },
+    "CHECK more pages": { "main": [[{ "node": "IF hasMore", "type": "main", "index": 0 }]] },
+    "IF hasMore": {
+      "main": [
+        [{ "node": "GET Products from Pawoon", "type": "main", "index": 0 }],
+        [{ "node": "LOG sync success", "type": "main", "index": 0 }]
+      ]
+    }
+  },
+  "active": false,
+  "settings": {
+    "executionOrder": "v1",
+    "saveExecutionProgress": true,
+    "saveDataErrorExecution": "all",
+    "saveDataSuccessExecution": "all",
+    "executionTimeout": 600
+  },
+  "tags": ["pawoon-sync", "scheduled"],
+  "meta": {
+    "version": "1.0",
+    "description": "Pawoon → OMNI-STOCK product sync. Cron every 15 min. Replace credential IDs after import."
+  }
+}

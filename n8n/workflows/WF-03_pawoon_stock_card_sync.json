@@ -1,0 +1,159 @@
+{
+  "name": "[WF-03] Pawoon — Stock Card Sync",
+  "nodes": [
+    {
+      "parameters": {
+        "rule": {
+          "interval": [{ "field": "minutes", "minutesInterval": 30 }]
+        }
+      },
+      "id": "trigger-cron",
+      "name": "CRON every 30 min",
+      "type": "n8n-nodes-base.scheduleTrigger",
+      "typeVersion": 1,
+      "position": [220, 320]
+    },
+    {
+      "parameters": {
+        "values": {
+          "string": [
+            { "name": "startedAt", "value": "={{ $now.toISO() }}" },
+            { "name": "periodDate", "value": "={{ $now.setZone('Asia/Jakarta').toISODate() }}" }
+          ]
+        },
+        "options": {}
+      },
+      "id": "init-state",
+      "name": "INIT sync state",
+      "type": "n8n-nodes-base.set",
+      "typeVersion": 3,
+      "position": [440, 320]
+    },
+    {
+      "parameters": {
+        "method": "GET",
+        "url": "={{ $env.PAWOON_API_BASE_URL }}/inventory/stockcard",
+        "authentication": "predefinedCredentialType",
+        "nodeCredentialType": "oAuth2Api",
+        "sendQuery": true,
+        "queryParameters": {
+          "parameters": [
+            { "name": "date", "value": "={{ $json.periodDate }}" }
+          ]
+        },
+        "options": {
+          "timeout": 30000,
+          "retry": { "enabled": true, "maxTries": 3 }
+        }
+      },
+      "id": "get-stockcard",
+      "name": "GET Stock Cards from Pawoon",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4,
+      "position": [680, 320],
+      "credentials": {
+        "oAuth2Api": { "id": "REPLACE_PAWOON_CRED_ID", "name": "Pawoon API - Production" }
+      },
+      "retryOnFail": true,
+      "maxTries": 3,
+      "waitBetweenTries": 1000
+    },
+    {
+      "parameters": {
+        "jsCode": "const items = $input.first().json.data || [];\nconst periodDate = $('INIT sync state').first().json.periodDate;\nreturn items.map((row) => ({\n  json: {\n    pawoon_outlet_id: String(row.outlet_id),\n    pawoon_product_id: String(row.product_id),\n    period_date: periodDate,\n    stok_awal: Number(row.stok_awal || 0),\n    masuk: Number(row.masuk || 0),\n    keluar: Number(row.keluar || 0),\n    penjualan: Number(row.penjualan || 0),\n    transfer: Number(row.transfer || 0),\n    penyesuaian: Number(row.penyesuaian || 0),\n    stok_akhir: Number(row.stok_akhir || 0),\n    raw_data: row,\n    synced_at: new Date().toISOString()\n  }\n}));"
+      },
+      "id": "map-stockcard",
+      "name": "MAP Pawoon → pawoon_stock_cards",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [920, 320]
+    },
+    {
+      "parameters": {
+        "operation": "upsert",
+        "tableId": "pawoon_stock_cards",
+        "matchingColumns": "pawoon_outlet_id,pawoon_product_id,period_date",
+        "fieldsUi": {
+          "fieldValues": [
+            { "fieldId": "pawoon_outlet_id", "fieldValue": "={{ $json.pawoon_outlet_id }}" },
+            { "fieldId": "pawoon_product_id", "fieldValue": "={{ $json.pawoon_product_id }}" },
+            { "fieldId": "period_date", "fieldValue": "={{ $json.period_date }}" },
+            { "fieldId": "stok_awal", "fieldValue": "={{ $json.stok_awal }}" },
+            { "fieldId": "masuk", "fieldValue": "={{ $json.masuk }}" },
+            { "fieldId": "keluar", "fieldValue": "={{ $json.keluar }}" },
+            { "fieldId": "penjualan", "fieldValue": "={{ $json.penjualan }}" },
+            { "fieldId": "transfer", "fieldValue": "={{ $json.transfer }}" },
+            { "fieldId": "penyesuaian", "fieldValue": "={{ $json.penyesuaian }}" },
+            { "fieldId": "stok_akhir", "fieldValue": "={{ $json.stok_akhir }}" },
+            { "fieldId": "raw_data", "fieldValue": "={{ $json.raw_data }}" },
+            { "fieldId": "synced_at", "fieldValue": "={{ $json.synced_at }}" }
+          ]
+        }
+      },
+      "id": "upsert-stockcard",
+      "name": "UPSERT to pawoon_stock_cards",
+      "type": "n8n-nodes-base.supabase",
+      "typeVersion": 1,
+      "position": [1180, 320],
+      "credentials": {
+        "supabaseApi": {
+          "id": "REPLACE_SUPABASE_CRED_ID",
+          "name": "Supabase - Service Role"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "operation": "insert",
+        "tableId": "pawoon_sync_log",
+        "fieldsUi": {
+          "fieldValues": [
+            { "fieldId": "workflow", "fieldValue": "[WF-03] Pawoon Stock Card Sync" },
+            { "fieldId": "table_name", "fieldValue": "pawoon_stock_cards" },
+            {
+              "fieldId": "records_synced",
+              "fieldValue": "={{ ($('UPSERT to pawoon_stock_cards').all() || []).length }}"
+            },
+            {
+              "fieldId": "duration_ms",
+              "fieldValue": "={{ Date.now() - new Date($('INIT sync state').first().json.startedAt).getTime() }}"
+            },
+            { "fieldId": "status", "fieldValue": "success" },
+            { "fieldId": "synced_at", "fieldValue": "={{ $now.toISO() }}" }
+          ]
+        }
+      },
+      "id": "log-success",
+      "name": "LOG sync success",
+      "type": "n8n-nodes-base.supabase",
+      "typeVersion": 1,
+      "position": [1440, 320],
+      "credentials": {
+        "supabaseApi": {
+          "id": "REPLACE_SUPABASE_CRED_ID",
+          "name": "Supabase - Service Role"
+        }
+      }
+    }
+  ],
+  "connections": {
+    "CRON every 30 min": { "main": [[{ "node": "INIT sync state", "type": "main", "index": 0 }]] },
+    "INIT sync state": { "main": [[{ "node": "GET Stock Cards from Pawoon", "type": "main", "index": 0 }]] },
+    "GET Stock Cards from Pawoon": { "main": [[{ "node": "MAP Pawoon → pawoon_stock_cards", "type": "main", "index": 0 }]] },
+    "MAP Pawoon → pawoon_stock_cards": { "main": [[{ "node": "UPSERT to pawoon_stock_cards", "type": "main", "index": 0 }]] },
+    "UPSERT to pawoon_stock_cards": { "main": [[{ "node": "LOG sync success", "type": "main", "index": 0 }]] }
+  },
+  "active": false,
+  "settings": {
+    "executionOrder": "v1",
+    "saveExecutionProgress": true,
+    "saveDataErrorExecution": "all",
+    "saveDataSuccessExecution": "all",
+    "executionTimeout": 600
+  },
+  "tags": ["pawoon-sync", "scheduled"],
+  "meta": {
+    "version": "1.0",
+    "description": "Pawoon → OMNI-STOCK stock card sync. Cron every 30 min for current Asia/Jakarta date."
+  }
+}

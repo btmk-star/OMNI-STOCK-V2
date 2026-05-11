@@ -1,0 +1,123 @@
+@import "tailwindcss";
+
+@custom-variant dark (&:where(.dark, .dark *));
+
+:root {
+  --color-cream: 60 100% 97%;
+  --color-mint: 96 88% 89%;
+  --color-lime: 65 87% 54%;
+  --color-teal: 166 88% 18%;
+  --color-forest: 161 62% 12%;
+  --color-midnight: 161 67% 8%;
+
+  --color-background: var(--color-cream);
+  --color-surface: 0 0% 100%;
+  --color-surface-alt: 60 33% 97%;
+
+  --color-text-primary: var(--color-midnight);
+  --color-text-secondary: 161 20% 40%;
+  --color-text-muted: 0 0% 55%;
+
+  --color-border-default: 96 20% 88%;
+  --color-border-focus: var(--color-teal);
+
+  --color-primary: var(--color-teal);
+  --color-accent: var(--color-lime);
+  --color-accent-soft: var(--color-mint);
+
+  --color-success: 142 76% 36%;
+  --color-success-bg: var(--color-mint);
+  --color-warning: 38 92% 50%;
+  --color-warning-bg: 48 96% 89%;
+  --color-danger: 0 84% 60%;
+  --color-danger-bg: 0 86% 97%;
+
+  --color-stock-safe: var(--color-teal);
+  --color-stock-warning: var(--color-warning);
+  --color-stock-critical: var(--color-danger);
+
+  --color-chart-1: var(--color-teal);
+  --color-chart-2: var(--color-lime);
+  --color-chart-3: var(--color-mint);
+  --color-chart-4: 166 50% 30%;
+  --color-chart-5: 65 70% 70%;
+
+  --shadow-card: 0 2px 8px 0 hsl(161 30% 20% / 0.06);
+}
+
+.dark {
+  --color-background: var(--color-midnight);
+  --color-surface: 161 55% 11%;
+  --color-surface-alt: var(--color-forest);
+
+  --color-text-primary: 60 50% 95%;
+  --color-text-secondary: 96 30% 70%;
+  --color-text-muted: 0 0% 60%;
+
+  --color-border-default: 161 30% 18%;
+  --color-border-focus: var(--color-lime);
+
+  --color-primary: 166 70% 40%;
+  --color-accent: var(--color-lime);
+  --color-accent-soft: 161 40% 20%;
+
+  --shadow-card: 0 2px 8px 0 hsl(0 0% 0% / 0.3);
+}
+
+@theme inline {
+  --color-cream: hsl(var(--color-cream));
+  --color-mint: hsl(var(--color-mint));
+  --color-lime: hsl(var(--color-lime));
+  --color-teal: hsl(var(--color-teal));
+  --color-forest: hsl(var(--color-forest));
+  --color-midnight: hsl(var(--color-midnight));
+
+  --color-background: hsl(var(--color-background));
+  --color-surface: hsl(var(--color-surface));
+  --color-surface-alt: hsl(var(--color-surface-alt));
+
+  --color-text-primary: hsl(var(--color-text-primary));
+  --color-text-secondary: hsl(var(--color-text-secondary));
+  --color-text-muted: hsl(var(--color-text-muted));
+
+  --color-border-default: hsl(var(--color-border-default));
+  --color-border-focus: hsl(var(--color-border-focus));
+
+  --color-primary: hsl(var(--color-primary));
+  --color-accent: hsl(var(--color-accent));
+  --color-accent-soft: hsl(var(--color-accent-soft));
+
+  --color-success: hsl(var(--color-success));
+  --color-warning: hsl(var(--color-warning));
+  --color-danger: hsl(var(--color-danger));
+
+  --color-stock-safe: hsl(var(--color-stock-safe));
+  --color-stock-warning: hsl(var(--color-stock-warning));
+  --color-stock-critical: hsl(var(--color-stock-critical));
+
+  --color-chart-1: hsl(var(--color-chart-1));
+  --color-chart-2: hsl(var(--color-chart-2));
+  --color-chart-3: hsl(var(--color-chart-3));
+  --color-chart-4: hsl(var(--color-chart-4));
+  --color-chart-5: hsl(var(--color-chart-5));
+
+  --font-sans: var(--font-inter), ui-sans-serif, system-ui, sans-serif;
+  --font-mono: var(--font-jetbrains-mono), ui-monospace, "Cascadia Code",
+    "Source Code Pro", monospace;
+
+  --radius-sm: 8px;
+  --radius-md: 12px;
+  --radius-lg: 16px;
+  --radius-xl: 20px;
+  --radius-2xl: 24px;
+
+  --shadow-card: var(--shadow-card);
+}
+
+body {
+  background-color: hsl(var(--color-background));
+  color: hsl(var(--color-text-primary));
+  font-family: var(--font-sans);
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+}
