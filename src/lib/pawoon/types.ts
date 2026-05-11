@@ -1,57 +1,95 @@
-// Shape Pawoon Open API response. Optional fields karena Pawoon docs tidak
-// fully consistent dan beberapa field bisa hilang per-tenant.
+// Verified shape per response actual https://open-api.pawoon.com (May 2026).
+// Pawoon API butuh `outlet_id` mandatory di hampir semua endpoint.
 
 export interface PawoonOutlet {
-  id: string | number;
+  id: string;
   name: string;
+  add_ons?: string[];
   address?: string;
-  phone?: string;
-  is_active?: boolean;
+  phone?: string | null;
+  city_id?: string;
+  city_name?: string;
+  province_id?: string;
+  province_name?: string;
+  latitude?: number;
+  longitude?: number;
+  taxes_and_services?: unknown[];
+  is_open?: boolean;
+  loyalty_outlet_id?: string;
+  created_at?: string;
+  updated_at?: string;
+  deleted_at?: string | null;
 }
 
 export interface PawoonCategory {
-  id: string | number;
+  id: string;
   name: string;
+  created_at?: string;
+  updated_at?: string;
+  deleted_at?: string | null;
 }
 
 export interface PawoonProduct {
-  id: string | number;
+  id: string;
   name: string;
-  category?: PawoonCategory | null;
-  category_id?: string | number;
-  category_name?: string;
-  price?: number | string;
   sku?: string | null;
+  price?: number;
   barcode?: string | null;
-  is_sold?: boolean;
-  outlet_ids?: Array<string | number>;
+  description?: string | null;
+  image?: string | null;
+  tax?: string | number;
+  stock_unit?: string;
+  type?: string; // "single" | "variant" | dst
+  has_alertstock?: boolean;
+  is_sellable_by_stock?: boolean;
+  stock_tracked?: boolean;
+  sellable?: boolean;
+  alert_stock_limit?: number;
+  product_category_id?: string;
+  has_modifier?: boolean;
+  has_variant?: boolean;
+  qty?: number;
+  created_at?: string;
+  updated_at?: string;
+  deleted_at?: string | null;
   [key: string]: unknown;
 }
 
 export interface PawoonTransactionItem {
-  product_id: string | number;
+  // Pawoon transaction items punya banyak fields — keep flexible
+  product_id?: string;
   product_name?: string;
-  qty: number;
+  qty?: number;
   price?: number;
   subtotal?: number;
   [key: string]: unknown;
 }
 
 export interface PawoonTransaction {
-  id: string | number;
-  outlet_id: string | number;
-  transaction_date: string;
-  total_amount?: number | string;
-  payment_method?: string;
+  id: string;
+  receipt_code?: string;
+  outlet_id: string;
+  device_id?: string;
+  cashier_id?: string;
+  customer_id?: string;
   customer_name?: string | null;
-  channel?: string;
-  items: PawoonTransactionItem[];
+  customer_phone?: string | null;
+  customer_email?: string | null;
+  sales_type_id?: string;
+  sales_type_name?: string; // "Dine In", "Take Away", "Grab Food", dll
+  device_timestamp: string; // tanggal transaksi
+  total_payment?: number;
+  total_tax?: number;
+  total_discount?: number;
+  total_service?: number;
+  details?: PawoonTransactionItem[];
+  payments?: unknown[];
   [key: string]: unknown;
 }
 
 export interface PawoonStockCardRow {
-  outlet_id: string | number;
-  product_id: string | number;
+  outlet_id?: string;
+  product_id?: string;
   stok_awal?: number | string;
   masuk?: number | string;
   keluar?: number | string;
@@ -65,10 +103,9 @@ export interface PawoonStockCardRow {
 export interface PawoonPaginatedResponse<T> {
   data: T[];
   meta?: {
-    current_page?: number;
-    last_page?: number;
-    total_pages?: number;
+    count?: number;
     total?: number;
+    page?: number;
     per_page?: number;
   };
 }

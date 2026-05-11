@@ -1,4 +1,5 @@
 import type {
+  PawoonOutlet,
   PawoonProduct,
   PawoonSession,
   PawoonStockCardRow,
@@ -23,16 +24,10 @@ function asNumber(value: unknown, fallback = 0): number {
   return fallback;
 }
 
-function asArrayOfStrings(value: unknown): string[] {
-  if (!Array.isArray(value)) return [];
-  return value.map((v) => String(v));
-}
-
 const JAKARTA_TZ = 'Asia/Jakarta';
 
 export function detectSession(date: Date | string): PawoonSession {
   const d = typeof date === 'string' ? new Date(date) : date;
-  // Convert to Jakarta hour using Intl (avoids dependency on host TZ).
   const hour = Number.parseInt(
     new Intl.DateTimeFormat('en-US', {
       hour: '2-digit',
@@ -48,6 +43,34 @@ export function detectSession(date: Date | string): PawoonSession {
   return 'late_night';
 }
 
+// =====================================================
+// Outlet
+// =====================================================
+export interface PawoonOutletRow {
+  pawoon_id: string;
+  name: string;
+  address: string | null;
+  phone: string | null;
+  is_active: boolean;
+  raw_data: PawoonOutlet;
+  synced_at: string;
+}
+
+export function pawoonOutletToRow(o: PawoonOutlet): PawoonOutletRow {
+  return {
+    pawoon_id: asString(o.id),
+    name: asString(o.name),
+    address: asOptionalString(o.address),
+    phone: asOptionalString(o.phone),
+    is_active: o.deleted_at === null || o.deleted_at === undefined,
+    raw_data: o,
+    synced_at: new Date().toISOString(),
+  };
+}
+
+// =====================================================
+// Product
+// =====================================================
 export interface PawoonProductRow {
   pawoon_id: string;
   name: string;
@@ -62,24 +85,36 @@ export interface PawoonProductRow {
   synced_at: string;
 }
 
-export function pawoonProductToRow(p: PawoonProduct): PawoonProductRow {
-  const categoryId = p.category?.id ?? p.category_id;
-  const categoryName = p.category?.name ?? p.category_name ?? null;
+export function pawoonProductToRow(
+  p: PawoonProduct,
+  outletId: string,
+  categoryNameById?: Map<string, string>,
+): PawoonProductRow {
+  const categoryId = p.product_category_id ? asString(p.product_category_id) : null;
+  const categoryName = categoryId && categoryNameById ? categoryNameById.get(categoryId) ?? null : null;
   return {
     pawoon_id: asString(p.id),
     name: asString(p.name),
-    category_name: categoryName ? asString(categoryName) : null,
-    pawoon_category_id: categoryId ? asString(categoryId) : null,
+    category_name: categoryName,
+    pawoon_category_id: categoryId,
     price: asNumber(p.price),
     sku: asOptionalString(p.sku),
     barcode: asOptionalString(p.barcode),
-    is_sold: p.is_sold !== false,
-    outlet_ids: asArrayOfStrings(p.outlet_ids),
+    // Pawoon pakai `sellable`. Default true kalau tidak ada field-nya.
+    is_sold: p.sellable !== false,
+    // Products per-outlet di Pawoon — outlet_ids berisi outlet ID tempat produk ini di-fetch.
+    // Kalau produk yang sama muncul di beberapa outlet, akan ada multiple rows berbeda — onConflict
+    // (pawoon_id) akan replace. Untuk merge outlet_ids dari multiple outlet, perlu logic
+    // di sync endpoint (gabung array sebelum upsert).
+    outlet_ids: [outletId],
     raw_data: p,
     synced_at: new Date().toISOString(),
   };
 }
 
+// =====================================================
+// Stock Card
+// =====================================================
 export interface PawoonStockCardRowMapped {
   pawoon_outlet_id: string;
   pawoon_product_id: string;
@@ -97,10 +132,12 @@ export interface PawoonStockCardRowMapped {
 
 export function pawoonStockCardToRow(
   row: PawoonStockCardRow,
+  outletId: string,
   periodDate: string,
 ): PawoonStockCardRowMapped {
   return {
-    pawoon_outlet_id: asString(row.outlet_id),
+    // Pawoon stock card response sometimes includes outlet_id, fallback ke param.
+    pawoon_outlet_id: row.outlet_id ? asString(row.outlet_id) : outletId,
     pawoon_product_id: asString(row.product_id),
     period_date: periodDate,
     stok_awal: asNumber(row.stok_awal),
@@ -115,6 +152,9 @@ export function pawoonStockCardToRow(
   };
 }
 
+// =====================================================
+// Transaction
+// =====================================================
 export interface PawoonTransactionRow {
   pawoon_id: string;
   pawoon_outlet_id: string;
@@ -133,25 +173,35 @@ export function pawoonTransactionToRow(t: PawoonTransaction): PawoonTransactionR
   return {
     pawoon_id: asString(t.id),
     pawoon_outlet_id: asString(t.outlet_id),
-    transaction_date: t.transaction_date,
-    total_amount: asNumber(t.total_amount),
-    payment_method: asOptionalString(t.payment_method),
-    items: t.items ?? [],
+    transaction_date: t.device_timestamp,
+    total_amount: asNumber(t.total_payment),
+    payment_method: null, // Pawoon stores di sub-array `payments`, ambil kalau perlu
+    items: t.details ?? [],
     customer_name: asOptionalString(t.customer_name),
-    channel: asOptionalString(t.channel),
-    session: detectSession(t.transaction_date),
+    channel: asOptionalString(t.sales_type_name),
+    session: detectSession(t.device_timestamp),
     raw_data: t,
     synced_at: new Date().toISOString(),
   };
 }
 
+// =====================================================
+// Utilities
+// =====================================================
 export function todayInJakarta(): string {
-  // Returns YYYY-MM-DD in Asia/Jakarta timezone
-  const formatter = new Intl.DateTimeFormat('en-CA', {
+  return new Intl.DateTimeFormat('en-CA', {
     year: 'numeric',
     month: '2-digit',
     day: '2-digit',
     timeZone: JAKARTA_TZ,
-  });
-  return formatter.format(new Date());
+  }).format(new Date());
+}
+
+/**
+ * Compute total pages dari Pawoon meta `{count, total, per_page}`.
+ * Pawoon tidak return `last_page` atau `total_pages`, jadi compute manual.
+ */
+export function pawoonTotalPages(meta?: { total?: number; per_page?: number }): number {
+  if (!meta?.total || !meta?.per_page) return 1;
+  return Math.max(1, Math.ceil(meta.total / meta.per_page));
 }

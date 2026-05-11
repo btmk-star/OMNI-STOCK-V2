@@ -3,7 +3,11 @@ import { createAdminClient } from '@/lib/supabase/admin';
 import { fetchPawoon } from '@/lib/pawoon/client';
 import { PAWOON_PATHS } from '@/lib/pawoon/endpoints';
 import { pawoonStockCardToRow, todayInJakarta } from '@/lib/pawoon/transforms';
-import type { PawoonPaginatedResponse, PawoonStockCardRow } from '@/lib/pawoon/types';
+import type {
+  PawoonOutlet,
+  PawoonPaginatedResponse,
+  PawoonStockCardRow,
+} from '@/lib/pawoon/types';
 import { startTimer, unauthorizedResponse, verifyCronAuth } from '../_helpers';
 
 const WORKFLOW = '[WF-03] Pawoon Stock Card Sync';
@@ -19,25 +23,40 @@ export async function GET(request: NextRequest) {
   const supabase = createAdminClient();
   const periodDate = todayInJakarta();
   let totalSynced = 0;
+  const perOutletStats: Array<{ outlet_id: string; rows: number }> = [];
 
   try {
-    // Per Pawoon API: GET /inventory/stockcard returns rows for all outlets/products on given date
-    const response = await fetchPawoon<PawoonPaginatedResponse<PawoonStockCardRow>>(
-      PAWOON_PATHS.inventoryStockCard,
-      { query: { date: periodDate } },
+    // Pull list outlet active dari Pawoon (source of truth — kalau outlet baru ditambah,
+    // langsung ke-include tanpa nunggu cron product sync)
+    const outletsResp = await fetchPawoon<PawoonPaginatedResponse<PawoonOutlet>>(
+      PAWOON_PATHS.outlets,
     );
+    const activeOutlets = (outletsResp.data ?? []).filter((o) => !o.deleted_at);
 
-    const items = (response.data ?? []).map((row) => pawoonStockCardToRow(row, periodDate));
+    for (const outlet of activeOutlets) {
+      const resp = await fetchPawoon<PawoonPaginatedResponse<PawoonStockCardRow>>(
+        PAWOON_PATHS.inventoryStockCard,
+        { query: { outlet_id: outlet.id, date: periodDate } },
+      );
 
-    for (let i = 0; i < items.length; i += BATCH_SIZE) {
-      const batch = items.slice(i, i + BATCH_SIZE);
-      const { error } = await supabase
-        .from('pawoon_stock_cards')
-        .upsert(batch as never, {
-          onConflict: 'pawoon_outlet_id,pawoon_product_id,period_date',
-        });
-      if (error) throw new Error(`Supabase upsert failed: ${error.message}`);
-      totalSynced += batch.length;
+      const items = (resp.data ?? []).map((row) =>
+        pawoonStockCardToRow(row, outlet.id, periodDate),
+      );
+
+      for (let i = 0; i < items.length; i += BATCH_SIZE) {
+        const batch = items.slice(i, i + BATCH_SIZE);
+        const { error } = await supabase
+          .from('pawoon_stock_cards')
+          .upsert(batch as never, {
+            onConflict: 'pawoon_outlet_id,pawoon_product_id,period_date',
+          });
+        if (error) {
+          throw new Error(`pawoon_stock_cards upsert outlet ${outlet.id}: ${error.message}`);
+        }
+        totalSynced += batch.length;
+      }
+
+      perOutletStats.push({ outlet_id: outlet.id, rows: items.length });
     }
 
     await supabase.from('pawoon_sync_log').insert({
@@ -52,7 +71,9 @@ export async function GET(request: NextRequest) {
     return Response.json({
       success: true,
       period_date: periodDate,
+      outlets_synced: activeOutlets.length,
       records_synced: totalSynced,
+      per_outlet: perOutletStats,
       duration_ms: elapsed(),
     });
   } catch (err) {
