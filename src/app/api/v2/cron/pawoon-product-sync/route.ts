@@ -1,7 +1,7 @@
 import { NextRequest } from 'next/server';
 import { createAdminClient } from '@/lib/supabase/admin';
 import { fetchPawoon } from '@/lib/pawoon/client';
-import { PAWOON_DEFAULT_PER_PAGE, PAWOON_PATHS } from '@/lib/pawoon/endpoints';
+import { PAWOON_PATHS } from '@/lib/pawoon/endpoints';
 import {
   pawoonOutletToRow,
   pawoonProductToRow,
@@ -9,7 +9,6 @@ import {
   type PawoonProductRow,
 } from '@/lib/pawoon/transforms';
 import type {
-  PawoonCategory,
   PawoonOutlet,
   PawoonPaginatedResponse,
   PawoonProduct,
@@ -18,9 +17,12 @@ import { startTimer, unauthorizedResponse, verifyCronAuth } from '../_helpers';
 
 const WORKFLOW = '[WF-01] Pawoon Product Sync';
 const BATCH_SIZE = 500;
+// Pawoon kasih default 100/page. Naikkan ke 200 untuk kurangi pagination calls,
+// jadi total runtime turun ~half. Tetap aman per Pawoon limits.
+const PAGE_SIZE = 200;
 
 export const dynamic = 'force-dynamic';
-export const maxDuration = 60;
+export const maxDuration = 60; // Vercel Hobby max — strict.
 
 export async function GET(request: NextRequest) {
   if (!verifyCronAuth(request)) return unauthorizedResponse();
@@ -31,7 +33,7 @@ export async function GET(request: NextRequest) {
   let outletsSynced = 0;
 
   try {
-    // 1. Sync outlets dulu (idempotent — cuma ~5-10 outlet)
+    // 1. Sync outlets dulu (cheap, ~1 call)
     const outletsResp = await fetchPawoon<PawoonPaginatedResponse<PawoonOutlet>>(
       PAWOON_PATHS.outlets,
     );
@@ -46,48 +48,44 @@ export async function GET(request: NextRequest) {
       outletsSynced = outletRows.length;
     }
 
-    // 2. Per outlet: fetch categories (untuk enrich product) + fetch products paginated
-    const productByPawoonId = new Map<string, PawoonProductRow>();
-
-    for (const outlet of activeOutlets) {
-      // Categories per outlet untuk enrich category_name
-      const categoryNameById = new Map<string, string>();
-      try {
-        const catResp = await fetchPawoon<PawoonPaginatedResponse<PawoonCategory>>(
-          PAWOON_PATHS.productCategories,
-          { query: { outlet_id: outlet.id } },
-        );
-        for (const c of catResp.data ?? []) categoryNameById.set(c.id, c.name);
-      } catch {
-        // Categories optional — kalau gagal, tetap lanjut sync products tanpa nama category
-      }
-
-      // Products paginated
-      let page = 1;
-      let totalPages = 1;
-      do {
-        const resp = await fetchPawoon<PawoonPaginatedResponse<PawoonProduct>>(
-          PAWOON_PATHS.products,
-          { query: { outlet_id: outlet.id, page, per_page: PAWOON_DEFAULT_PER_PAGE } },
-        );
-        totalPages = pawoonTotalPages(resp.meta);
-
-        for (const p of resp.data ?? []) {
-          const row = pawoonProductToRow(p, outlet.id, categoryNameById);
-          // Gabung outlet_ids kalau produk yang sama (pawoon_id) muncul di beberapa outlet
-          const existing = productByPawoonId.get(row.pawoon_id);
-          if (existing) {
-            const merged = new Set([...existing.outlet_ids, ...row.outlet_ids]);
-            row.outlet_ids = [...merged];
+    // 2. Per outlet PARALLEL: fetch all pages of products. Pawoon catalog di-share
+    // antar outlet jadi total unique products tetap sama, tapi kita perlu fetch per
+    // outlet untuk dapat outlet_ids array yang lengkap.
+    // Skip categories enrich di sini supaya cepat — bisa di-backfill via separate cron.
+    const productsByOutlet = await Promise.all(
+      activeOutlets.map(async (outlet) => {
+        const outletProducts: PawoonProductRow[] = [];
+        let page = 1;
+        let totalPages = 1;
+        do {
+          const resp = await fetchPawoon<PawoonPaginatedResponse<PawoonProduct>>(
+            PAWOON_PATHS.products,
+            { query: { outlet_id: outlet.id, page, per_page: PAGE_SIZE } },
+          );
+          totalPages = pawoonTotalPages(resp.meta);
+          for (const p of resp.data ?? []) {
+            outletProducts.push(pawoonProductToRow(p, outlet.id));
           }
+          page += 1;
+        } while (page <= totalPages);
+        return { outletId: outlet.id, products: outletProducts };
+      }),
+    );
+
+    // 3. Merge: kalau pawoon_id sama muncul di multiple outlet, gabung outlet_ids
+    const productByPawoonId = new Map<string, PawoonProductRow>();
+    for (const { products } of productsByOutlet) {
+      for (const row of products) {
+        const existing = productByPawoonId.get(row.pawoon_id);
+        if (existing) {
+          existing.outlet_ids = [...new Set([...existing.outlet_ids, ...row.outlet_ids])];
+        } else {
           productByPawoonId.set(row.pawoon_id, row);
         }
-
-        page += 1;
-      } while (page <= totalPages);
+      }
     }
 
-    // 3. Batch upsert ke pawoon_products
+    // 4. Batch upsert ke pawoon_products
     const allProducts = [...productByPawoonId.values()];
     for (let i = 0; i < allProducts.length; i += BATCH_SIZE) {
       const batch = allProducts.slice(i, i + BATCH_SIZE);
