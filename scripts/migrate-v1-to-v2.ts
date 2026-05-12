@@ -460,11 +460,57 @@ async function migrateRecipeItems() {
       `DRY-RUN would insert ${recipeItemRows.length} recipe_items + ${rawMenuItemRows.length} raw_menu_items`,
     );
   } else {
-    // Use insert (not upsert) — items have UUID PK auto-generate
-    // Delete existing first untuk idempotency? Riskier — skip untuk Phase 2 (assume migration once)
-    if (recipeItemRows.length > 0) {
-      for (let i = 0; i < recipeItemRows.length; i += 100) {
-        const batch = recipeItemRows.slice(i, i + 100);
+    // Pre-filter: cuma keep rows dengan FK target yang valid di V2.
+    // Fetch existing IDs dari os_bahan_baku, os_raw_menu, os_recipes biar bisa filter.
+    const { data: bahanRows } = await v2.from('os_bahan_baku').select('id');
+    const { data: rawMenuRows } = await v2.from('os_raw_menu').select('id');
+    const { data: recipeRows } = await v2.from('os_recipes').select('id');
+    const validBahanIds = new Set((bahanRows ?? []).map((r) => r.id as string));
+    const validRawMenuIds = new Set((rawMenuRows ?? []).map((r) => r.id as string));
+    const validRecipeIds = new Set((recipeRows ?? []).map((r) => r.id as string));
+
+    let skippedFk = 0;
+    const validRecipeItemRows = recipeItemRows.filter((r) => {
+      if (!validRecipeIds.has(r.recipe_id as string)) {
+        skippedFk += 1;
+        return false;
+      }
+      if (r.bahan_id && !validBahanIds.has(r.bahan_id as string)) {
+        skippedFk += 1;
+        return false;
+      }
+      if (r.raw_menu_id && !validRawMenuIds.has(r.raw_menu_id as string)) {
+        skippedFk += 1;
+        return false;
+      }
+      return true;
+    });
+
+    const validRawMenuItemRows = rawMenuItemRows.filter((r) => {
+      if (!validRawMenuIds.has(r.raw_menu_id as string)) {
+        skippedFk += 1;
+        return false;
+      }
+      if (r.bahan_id && !validBahanIds.has(r.bahan_id as string)) {
+        skippedFk += 1;
+        return false;
+      }
+      return true;
+    });
+
+    if (skippedFk > 0) {
+      log(step, `skipped ${skippedFk} orphan rows (FK target tidak ada di V2)`);
+    }
+
+    // Delete existing items dulu (idempotent re-run safety — items pakai UUID PK,
+    // tidak punya stable conflict key untuk upsert)
+    await v2.from('os_recipe_items').delete().not('id', 'is', null);
+    await v2.from('os_raw_menu_items').delete().not('id', 'is', null);
+    log(step, 'cleared existing items, will re-insert');
+
+    if (validRecipeItemRows.length > 0) {
+      for (let i = 0; i < validRecipeItemRows.length; i += 50) {
+        const batch = validRecipeItemRows.slice(i, i + 50);
         const { error: upErr } = await v2.from('os_recipe_items').insert(batch);
         if (upErr) {
           log(step, `WARN recipe_items batch ${i}: ${upErr.message}`);
@@ -473,9 +519,9 @@ async function migrateRecipeItems() {
         }
       }
     }
-    if (rawMenuItemRows.length > 0) {
-      for (let i = 0; i < rawMenuItemRows.length; i += 100) {
-        const batch = rawMenuItemRows.slice(i, i + 100);
+    if (validRawMenuItemRows.length > 0) {
+      for (let i = 0; i < validRawMenuItemRows.length; i += 50) {
+        const batch = validRawMenuItemRows.slice(i, i + 50);
         const { error: upErr } = await v2.from('os_raw_menu_items').insert(batch);
         if (upErr) {
           log(step, `WARN raw_menu_items batch ${i}: ${upErr.message}`);
@@ -540,8 +586,10 @@ async function migratePurchaseOrders() {
   let groupIdx = 1;
   for (const items of groups.values()) {
     const first = items[0];
-    const day = first.created_at.slice(0, 10).replace(/-/g, '');
-    const groupId = `PO-V1MIG-${day}-${String(groupIdx).padStart(4, '0')}`;
+    // V1.6 PO ID format: keep short to fit VARCHAR(20).
+    // Format `MG-YYMMDD-NNNN` = 14 chars max. NNNN supports up to 9999 PO/day.
+    const yymmdd = first.created_at.slice(2, 10).replace(/-/g, '');
+    const groupId = `MG-${yymmdd}-${String(groupIdx).padStart(4, '0')}`;
     groupIdx += 1;
 
     const total = items.reduce((sum, it) => sum + Number(it.total_harga ?? 0), 0);
@@ -552,7 +600,7 @@ async function migratePurchaseOrders() {
       outlet_ids: [first.outlet_id],
       status: mapPoStatus(first.status),
       total_amount: total,
-      notes: `Migrated from V1.6 (${items.length} items, day ${day})`,
+      notes: `Migrated from V1.6 (${items.length} items, day ${yymmdd})`,
       created_by: null,
       created_by_name: 'V1.6 Migration',
       ordered_at: first.tanggal_kirim,
@@ -577,13 +625,31 @@ async function migratePurchaseOrders() {
   if (isDryRun) {
     log(step, `DRY-RUN would insert ${poHeaders.length} PO headers + ${poItems.length} PO items`);
   } else {
+    // Filter PO items: hanya insert yg bahan_id valid di V2 os_bahan_baku
+    const { data: bahanRows } = await v2.from('os_bahan_baku').select('id');
+    const validBahanIds = new Set((bahanRows ?? []).map((r) => r.id as string));
+    let skippedFk = 0;
+    const validPoItems = poItems.filter((it) => {
+      if (it.bahan_id && !validBahanIds.has(it.bahan_id as string)) {
+        skippedFk += 1;
+        return false;
+      }
+      return true;
+    });
+    if (skippedFk > 0) {
+      log(step, `skipped ${skippedFk} po_items dengan bahan_id orphan`);
+    }
+
+    // Delete existing po_items dulu (UUID PK, no stable upsert conflict key)
+    await v2.from('os_po_items').delete().not('id', 'is', null);
+
     for (let i = 0; i < poHeaders.length; i += 100) {
       const batch = poHeaders.slice(i, i + 100);
       const { error: upErr } = await v2.from('os_purchase_orders').upsert(batch, { onConflict: 'id' });
       if (upErr) throw new Error(`V2 os_purchase_orders (batch ${i}): ${upErr.message}`);
     }
-    for (let i = 0; i < poItems.length; i += 100) {
-      const batch = poItems.slice(i, i + 100);
+    for (let i = 0; i < validPoItems.length; i += 100) {
+      const batch = validPoItems.slice(i, i + 100);
       const { error: upErr } = await v2.from('os_po_items').insert(batch);
       if (upErr) {
         log(step, `WARN po_items batch ${i}: ${upErr.message}`);
