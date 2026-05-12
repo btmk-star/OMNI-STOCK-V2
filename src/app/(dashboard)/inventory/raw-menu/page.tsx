@@ -1,11 +1,33 @@
-import { PageStub } from '@/components/shared/page-stub';
+import { createClient } from '@/lib/supabase/server';
+import { RawMenuTable, type RawMenuRow } from './raw-menu-table';
 
-export default function RawMenuPage() {
+export default async function RawMenuPage({
+  searchParams,
+}: {
+  searchParams: Promise<{ q?: string }>;
+}) {
+  const params = await searchParams;
+  const supabase = await createClient();
+
+  let query = supabase
+    .from('os_raw_menu')
+    .select(
+      'id,name,satuan_hasil,jumlah_hasil,total_cogs,cogs_per_unit,is_active,updated_at',
+      { count: 'exact' },
+    )
+    .eq('is_active', true)
+    .order('name');
+
+  if (params.q) query = query.ilike('name', `%${params.q}%`);
+
+  const { data, count, error } = await query;
+
   return (
-    <PageStub
-      title="Raw Menu"
-      subtitle="9 semi-finished goods (SFG) — Dadar Crispy, Sambal Bawang, dll"
-      phase="Phase 3"
+    <RawMenuTable
+      initial={(data ?? []) as unknown as RawMenuRow[]}
+      total={count ?? 0}
+      query={params.q ?? ''}
+      fetchError={error?.message ?? null}
     />
   );
 }
