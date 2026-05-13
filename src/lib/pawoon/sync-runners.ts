@@ -169,6 +169,16 @@ export async function runStockCardSync(): Promise<SyncResult> {
           PAWOON_PATHS.inventoryStockCard,
           { query: { outlet_id: outlet.id, date: periodDate } },
         );
+        const recordCount = resp.data?.length ?? 0;
+        if (recordCount === 0) {
+          console.log(
+            `[WF-03] stockcard outlet=${outlet.id} (${outlet.name}) date=${periodDate} → 0 records. meta=${JSON.stringify(resp.meta ?? {})}`,
+          );
+        } else {
+          console.log(
+            `[WF-03] stockcard outlet=${outlet.id} (${outlet.name}) date=${periodDate} → ${recordCount} records. sample_keys=${JSON.stringify(Object.keys(resp.data[0] ?? {}))}`,
+          );
+        }
         const items = (resp.data ?? []).map((row) =>
           pawoonStockCardToRow(row, outlet.id, periodDate),
         );

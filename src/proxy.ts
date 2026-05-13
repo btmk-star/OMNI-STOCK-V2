@@ -6,6 +6,7 @@ const PUBLIC_PATH_PREFIXES = [
   '/api/v2/webhook',
   '/api/v2/cron',
   '/api/v2/pawoon/health',
+  '/api/v2/pawoon/debug',
   '/api/v2/wa/health',
 ];
 
