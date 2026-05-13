@@ -2,11 +2,12 @@
 
 import { useRouter, useSearchParams } from 'next/navigation';
 import { useState, useTransition } from 'react';
-import { ClipboardCheck, Loader2, PackageOpen } from 'lucide-react';
+import { ClipboardCheck, Loader2, PackageOpen, Upload } from 'lucide-react';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { formatDate, formatNumber } from '@/lib/utils/format';
 import type { ComputedStock } from '@/lib/utils/stock-compute';
+import { BulkOpnameDialog } from './bulk-opname-dialog';
 import { StockOpnameDialog } from './stock-opname-dialog';
 
 export interface StockRow extends ComputedStock {
@@ -65,6 +66,7 @@ export function StockBahanTable({
   const [kategori, setKategori] = useState(kategoriFilter);
   const [status, setStatus] = useState(statusFilter);
   const [opnameTarget, setOpnameTarget] = useState<StockRow | null>(null);
+  const [bulkOpen, setBulkOpen] = useState(false);
 
   const outletNameById = new Map(outlets.map((o) => [o.id, o.name]));
   const hasFilter = Boolean(outletFilter || kategoriFilter || statusFilter);
@@ -98,6 +100,12 @@ export function StockBahanTable({
             {counts.no_baseline} belum opname
           </p>
         </div>
+        {canManage ? (
+          <Button size="sm" variant="outline" onClick={() => setBulkOpen(true)}>
+            <Upload className="h-4 w-4" strokeWidth={1.5} />
+            Bulk Opname (XLS/CSV)
+          </Button>
+        ) : null}
       </header>
 
       <div className="grid grid-cols-2 gap-3 sm:grid-cols-4">
@@ -279,6 +287,17 @@ export function StockBahanTable({
           </table>
         </div>
       </div>
+
+      {canManage ? (
+        <BulkOpnameDialog
+          open={bulkOpen}
+          onOpenChange={setBulkOpen}
+          onSuccess={() => {
+            setBulkOpen(false);
+            router.refresh();
+          }}
+        />
+      ) : null}
 
       {canManage && opnameTarget ? (
         <StockOpnameDialog
