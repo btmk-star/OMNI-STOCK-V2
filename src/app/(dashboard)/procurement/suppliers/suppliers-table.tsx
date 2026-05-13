@@ -2,10 +2,24 @@
 
 import { useRouter, useSearchParams } from 'next/navigation';
 import { useState, useTransition } from 'react';
-import { Loader2, Search, MessageCircle, Star } from 'lucide-react';
+import {
+  Loader2,
+  Search,
+  MessageCircle,
+  Star,
+  Plus,
+  Pencil,
+  Power,
+  PowerOff,
+} from 'lucide-react';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
+import {
+  deactivateSupplier,
+  reactivateSupplier,
+} from '@/lib/actions/suppliers.actions';
+import { SupplierFormDialog } from './supplier-form-dialog';
 
 export interface SupplierRow {
   id: string;
@@ -28,7 +42,9 @@ interface Props {
   total: number;
   query: string;
   typeFilter: string;
+  showInactive: boolean;
   fetchError: string | null;
+  canManage: boolean;
 }
 
 const TYPE_LABEL: Record<SupplierRow['type'], string> = {
@@ -55,41 +71,87 @@ export function SuppliersTable({
   total,
   query,
   typeFilter,
+  showInactive,
   fetchError,
+  canManage,
 }: Props) {
   const router = useRouter();
-  const searchParams = useSearchParams();
   const [search, setSearch] = useState(query);
   const [type, setType] = useState(typeFilter);
+  const [includeInactive, setIncludeInactive] = useState(showInactive);
   const [isPending, startTransition] = useTransition();
-  const hasFilter = Boolean(query || typeFilter);
+  const [actionPending, startActionTransition] = useTransition();
+  const [dialogOpen, setDialogOpen] = useState(false);
+  const [editing, setEditing] = useState<SupplierRow | null>(null);
+  const [actionError, setActionError] = useState<string | null>(null);
+  const hasFilter = Boolean(query || typeFilter || showInactive);
 
   function applyFilters(e: React.FormEvent) {
     e.preventDefault();
     const params = new URLSearchParams();
     if (search) params.set('q', search);
     if (type) params.set('type', type);
+    if (includeInactive) params.set('show', 'all');
     startTransition(() => router.push(`/procurement/suppliers?${params.toString()}`));
   }
 
   function reset() {
     setSearch('');
     setType('');
+    setIncludeInactive(false);
     startTransition(() => router.push('/procurement/suppliers'));
+  }
+
+  function openCreate() {
+    setEditing(null);
+    setDialogOpen(true);
+  }
+
+  function openEdit(row: SupplierRow) {
+    setEditing(row);
+    setDialogOpen(true);
+  }
+
+  function toggleActive(row: SupplierRow) {
+    setActionError(null);
+    startActionTransition(async () => {
+      const res = row.is_active
+        ? await deactivateSupplier(row.id)
+        : await reactivateSupplier(row.id);
+      if ('error' in res && res.error) {
+        setActionError(res.error);
+        return;
+      }
+      router.refresh();
+    });
   }
 
   return (
     <div className="flex flex-col gap-5">
-      <header className="flex flex-col gap-1">
-        <h1 className="text-2xl font-bold text-midnight dark:text-cream">Suppliers</h1>
-        <p className="text-sm text-text-secondary">
-          {total.toLocaleString('id-ID')} vendor · kerjasama, non-kerjasama, online shop
-        </p>
+      <header className="flex flex-wrap items-start justify-between gap-3">
+        <div>
+          <h1 className="text-2xl font-bold text-midnight dark:text-cream">Suppliers</h1>
+          <p className="text-sm text-text-secondary">
+            {total.toLocaleString('id-ID')} vendor · kerjasama, non-kerjasama, online shop
+          </p>
+        </div>
+        {canManage ? (
+          <Button size="sm" onClick={openCreate}>
+            <Plus className="h-4 w-4" strokeWidth={1.5} />
+            Tambah Supplier
+          </Button>
+        ) : null}
       </header>
 
       {fetchError ? (
         <p className="rounded-lg bg-danger/10 px-3 py-2 text-sm text-danger">
           Gagal load: {fetchError}
+        </p>
+      ) : null}
+
+      {actionError ? (
+        <p className="rounded-lg bg-danger/10 px-3 py-2 text-sm text-danger">
+          {actionError}
         </p>
       ) : null}
 
@@ -120,6 +182,15 @@ export function SuppliersTable({
             <option value="non_kerjasama">Non-kerjasama</option>
             <option value="online_shop">Online Shop</option>
           </select>
+          <label className="flex items-center gap-2 text-xs text-text-secondary whitespace-nowrap">
+            <input
+              type="checkbox"
+              checked={includeInactive}
+              onChange={(e) => setIncludeInactive(e.target.checked)}
+              className="h-4 w-4 rounded border-border-default text-teal focus-visible:ring-teal/30"
+            />
+            Tampilkan inactive
+          </label>
           <div className="flex gap-2">
             <Button type="submit" size="sm" disabled={isPending}>
               {isPending ? <Loader2 className="h-4 w-4 animate-spin" /> : null}
@@ -144,18 +215,25 @@ export function SuppliersTable({
                 <th className="px-4 py-3 text-left">Payment</th>
                 <th className="px-4 py-3 text-right">Lead Time</th>
                 <th className="px-4 py-3 text-left">Rating</th>
+                <th className="px-4 py-3 text-left">Status</th>
+                {canManage ? <th className="px-4 py-3 text-right">Aksi</th> : null}
               </tr>
             </thead>
             <tbody>
               {initial.length === 0 ? (
                 <tr>
-                  <td colSpan={7} className="px-4 py-16 text-center">
+                  <td colSpan={canManage ? 9 : 8} className="px-4 py-16 text-center">
                     <p className="text-base font-medium text-forest dark:text-cream">
                       {hasFilter ? 'Tidak ada supplier cocok' : 'Belum ada supplier'}
                     </p>
                     {hasFilter ? (
                       <Button size="sm" variant="outline" className="mt-3" onClick={reset}>
                         Reset filter
+                      </Button>
+                    ) : canManage ? (
+                      <Button size="sm" className="mt-3" onClick={openCreate}>
+                        <Plus className="h-4 w-4" strokeWidth={1.5} />
+                        Tambah Supplier Pertama
                       </Button>
                     ) : null}
                   </td>
@@ -166,15 +244,15 @@ export function SuppliersTable({
                   return (
                     <tr
                       key={s.id}
-                      className="border-b border-border-default/50 text-sm hover:bg-mint/30"
+                      className={`border-b border-border-default/50 text-sm hover:bg-mint/30 ${
+                        !s.is_active ? 'opacity-50' : ''
+                      }`}
                     >
                       <td className="px-4 py-3 font-mono text-[12px] text-teal">{s.id}</td>
                       <td className="px-4 py-3">
                         <div className="text-text-primary">{s.name}</div>
                         {s.contact_person ? (
-                          <div className="text-[11px] text-text-muted">
-                            CP: {s.contact_person}
-                          </div>
+                          <div className="text-[11px] text-text-muted">CP: {s.contact_person}</div>
                         ) : null}
                       </td>
                       <td className="px-4 py-3">
@@ -199,9 +277,7 @@ export function SuppliersTable({
                           <span className="text-text-muted">—</span>
                         )}
                       </td>
-                      <td className="px-4 py-3 text-text-secondary">
-                        {s.payment_terms ?? '—'}
-                      </td>
+                      <td className="px-4 py-3 text-text-secondary">{s.payment_terms ?? '—'}</td>
                       <td className="px-4 py-3 text-right font-mono">
                         {s.lead_time_days != null ? `${s.lead_time_days} hari` : '—'}
                       </td>
@@ -215,6 +291,43 @@ export function SuppliersTable({
                           <span className="text-text-muted">—</span>
                         )}
                       </td>
+                      <td className="px-4 py-3">
+                        {s.is_active ? (
+                          <Badge variant="syncOk">Active</Badge>
+                        ) : (
+                          <Badge variant="poDraft">Inactive</Badge>
+                        )}
+                      </td>
+                      {canManage ? (
+                        <td className="px-4 py-3 text-right">
+                          <div className="inline-flex gap-1">
+                            <Button
+                              type="button"
+                              size="sm"
+                              variant="ghost"
+                              disabled={actionPending}
+                              onClick={() => openEdit(s)}
+                              title="Edit"
+                            >
+                              <Pencil className="h-3 w-3" strokeWidth={1.5} />
+                            </Button>
+                            <Button
+                              type="button"
+                              size="sm"
+                              variant="ghost"
+                              disabled={actionPending}
+                              onClick={() => toggleActive(s)}
+                              title={s.is_active ? 'Nonaktifkan' : 'Aktifkan kembali'}
+                            >
+                              {s.is_active ? (
+                                <PowerOff className="h-3 w-3 text-danger" strokeWidth={1.5} />
+                              ) : (
+                                <Power className="h-3 w-3 text-success" strokeWidth={1.5} />
+                              )}
+                            </Button>
+                          </div>
+                        </td>
+                      ) : null}
                     </tr>
                   );
                 })
@@ -223,6 +336,16 @@ export function SuppliersTable({
           </table>
         </div>
       </div>
+
+      {canManage ? (
+        <SupplierFormDialog
+          key={editing?.id ?? 'create'}
+          open={dialogOpen}
+          onOpenChange={setDialogOpen}
+          initial={editing}
+          onSuccess={() => router.refresh()}
+        />
+      ) : null}
     </div>
   );
 }

@@ -1,13 +1,26 @@
 import { createClient } from '@/lib/supabase/server';
+import { hasPermission, type Role } from '@/config/roles';
 import { SuppliersTable, type SupplierRow } from './suppliers-table';
 
 export default async function SuppliersPage({
   searchParams,
 }: {
-  searchParams: Promise<{ q?: string; type?: string }>;
+  searchParams: Promise<{ q?: string; type?: string; show?: string }>;
 }) {
   const params = await searchParams;
   const supabase = await createClient();
+
+  const { data: userData } = await supabase.auth.getUser();
+  let role: Role | null = null;
+  if (userData.user) {
+    const { data: profile } = await supabase
+      .from('user_profiles')
+      .select('role')
+      .eq('id', userData.user.id)
+      .single<{ role: Role }>();
+    role = profile?.role ?? null;
+  }
+  const canManage = hasPermission(role, 'suppliers.manage');
 
   let query = supabase
     .from('os_suppliers')
@@ -15,9 +28,9 @@ export default async function SuppliersPage({
       'id,name,contact_person,phone,whatsapp,email,address,type,payment_terms,lead_time_days,rating,is_active,notes',
       { count: 'exact' },
     )
-    .eq('is_active', true)
     .order('name');
 
+  if (params.show !== 'all') query = query.eq('is_active', true);
   if (params.q) query = query.ilike('name', `%${params.q}%`);
   if (params.type) query = query.eq('type', params.type);
 
@@ -29,7 +42,9 @@ export default async function SuppliersPage({
       total={count ?? 0}
       query={params.q ?? ''}
       typeFilter={params.type ?? ''}
+      showInactive={params.show === 'all'}
       fetchError={error?.message ?? null}
+      canManage={canManage}
     />
   );
 }
