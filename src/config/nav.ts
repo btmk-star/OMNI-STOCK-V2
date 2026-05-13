@@ -5,6 +5,7 @@ import {
   ClipboardList,
   Boxes,
   ChefHat,
+  PackageOpen,
   Soup,
   BookOpen,
   Utensils,
@@ -54,6 +55,7 @@ export const NAV_SECTIONS: NavSection[] = [
     items: [
       { href: '/products', label: 'Products', icon: Package, permission: 'products.view' },
       { href: '/inventory/stock-card', label: 'Kartu Stok', icon: Boxes, permission: 'inventory.view' },
+      { href: '/inventory/stok-bahan', label: 'Stok Bahan', icon: PackageOpen, permission: 'inventory.view' },
       { href: '/inventory/master-bahan', label: 'Master Bahan', icon: ChefHat, permission: 'inventory.view' },
       { href: '/inventory/raw-menu', label: 'Raw Menu', icon: Soup, permission: 'inventory.view' },
       { href: '/inventory/master-resep', label: 'Master Resep', icon: BookOpen, permission: 'inventory.view' },
