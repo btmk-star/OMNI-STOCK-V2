@@ -1,58 +1,58 @@
 'use server';
 
 import { revalidatePath } from 'next/cache';
+import { createClient } from '@/lib/supabase/server';
+import { hasPermission, type Role } from '@/config/roles';
+import {
+  runProductSync,
+  runStockCardSync,
+  runTransactionSync,
+  type SyncResult,
+} from '@/lib/pawoon/sync-runners';
 
 type ActionResult<T = unknown> =
   | { data: T; error?: never }
   | { error: string; data?: never };
 
-interface SyncResponse {
-  success: boolean;
-  records_synced?: number;
-  duration_ms?: number;
-  error?: string;
-}
-
-async function triggerCron(path: string): Promise<ActionResult<SyncResponse>> {
-  const secret = process.env.CRON_SECRET;
-  if (!secret) {
-    return { error: 'CRON_SECRET tidak terkonfigurasi di server' };
+async function authorize(): Promise<{ ok: true } | { error: string }> {
+  const supabase = await createClient();
+  const { data: userData } = await supabase.auth.getUser();
+  if (!userData.user) return { error: 'Tidak terautentikasi' };
+  const { data: profile } = await supabase
+    .from('user_profiles')
+    .select('role')
+    .eq('id', userData.user.id)
+    .single<{ role: Role }>();
+  // Pawoon sync masuk kategori inventory.full (admin/manager/spv/senior_staff)
+  if (!hasPermission(profile?.role ?? null, 'inventory.full')) {
+    return { error: 'Role kamu tidak punya akses untuk trigger sync' };
   }
+  return { ok: true };
+}
 
-  const appUrl =
-    process.env.NEXT_PUBLIC_APP_URL ??
-    (process.env.VERCEL_URL ? `https://${process.env.VERCEL_URL}` : 'http://localhost:3000');
-
-  try {
-    const response = await fetch(`${appUrl}${path}`, {
-      method: 'GET',
-      headers: { authorization: `Bearer ${secret}` },
-      cache: 'no-store',
-    });
-    const data = (await response.json()) as SyncResponse;
-    if (!response.ok || data.success === false) {
-      return { error: data.error ?? `Sync failed (HTTP ${response.status})` };
-    }
-    return { data };
-  } catch (err) {
-    return { error: err instanceof Error ? err.message : 'Network error' };
+async function runWithAuth(
+  runner: () => Promise<SyncResult>,
+  invalidatePath: string,
+): Promise<ActionResult<SyncResult>> {
+  const auth = await authorize();
+  if ('error' in auth) return { error: auth.error };
+  const result = await runner();
+  if (!result.success) {
+    return { error: result.error ?? 'Sync gagal' };
   }
+  revalidatePath(invalidatePath);
+  revalidatePath('/settings');
+  return { data: result };
 }
 
-export async function triggerProductSync(): Promise<ActionResult<SyncResponse>> {
-  const result = await triggerCron('/api/v2/cron/pawoon-product-sync');
-  if ('data' in result) revalidatePath('/products');
-  return result;
+export async function triggerProductSync() {
+  return runWithAuth(runProductSync, '/products');
 }
 
-export async function triggerStockCardSync(): Promise<ActionResult<SyncResponse>> {
-  const result = await triggerCron('/api/v2/cron/pawoon-stock-card-sync');
-  if ('data' in result) revalidatePath('/inventory/stock-card');
-  return result;
+export async function triggerStockCardSync() {
+  return runWithAuth(runStockCardSync, '/inventory/stock-card');
 }
 
-export async function triggerTransactionSync(): Promise<ActionResult<SyncResponse>> {
-  const result = await triggerCron('/api/v2/cron/pawoon-transaction-sync');
-  if ('data' in result) revalidatePath('/products');
-  return result;
+export async function triggerTransactionSync() {
+  return runWithAuth(runTransactionSync, '/products');
 }

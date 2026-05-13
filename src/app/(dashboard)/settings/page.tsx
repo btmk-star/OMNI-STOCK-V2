@@ -4,6 +4,7 @@ import { createClient } from '@/lib/supabase/server';
 import { hasPermission, ROLE_LABELS, type Role } from '@/config/roles';
 import { availableProviders } from '@/lib/wa';
 import { fonnteDeviceStatus } from '@/lib/wa/fonnte';
+import { WORKFLOW_LABELS } from '@/lib/pawoon/sync-runners';
 import { formatDate, formatDateTime } from '@/lib/utils/format';
 import { SyncTriggers } from './sync-triggers';
 
@@ -33,8 +34,8 @@ export default async function SettingsPage() {
   ] = await Promise.all([
     supabase
       .from('pawoon_sync_log')
-      .select('synced_at,status,records_synced,duration_ms,error_message')
-      .eq('workflow', 'product_sync')
+      .select('synced_at,status,records_synced,duration_ms,error')
+      .eq('workflow', WORKFLOW_LABELS.product)
       .order('synced_at', { ascending: false })
       .limit(1)
       .maybeSingle<{
@@ -42,12 +43,12 @@ export default async function SettingsPage() {
         status: string;
         records_synced: number;
         duration_ms: number;
-        error_message: string | null;
+        error: string | null;
       }>(),
     supabase
       .from('pawoon_sync_log')
-      .select('synced_at,status,records_synced,duration_ms,error_message')
-      .eq('workflow', 'stock_card_sync')
+      .select('synced_at,status,records_synced,duration_ms,error')
+      .eq('workflow', WORKFLOW_LABELS.stockCard)
       .order('synced_at', { ascending: false })
       .limit(1)
       .maybeSingle<{
@@ -55,12 +56,12 @@ export default async function SettingsPage() {
         status: string;
         records_synced: number;
         duration_ms: number;
-        error_message: string | null;
+        error: string | null;
       }>(),
     supabase
       .from('pawoon_sync_log')
-      .select('synced_at,status,records_synced,duration_ms,error_message')
-      .eq('workflow', 'transaction_sync')
+      .select('synced_at,status,records_synced,duration_ms,error')
+      .eq('workflow', WORKFLOW_LABELS.transaction)
       .order('synced_at', { ascending: false })
       .limit(1)
       .maybeSingle<{
@@ -68,7 +69,7 @@ export default async function SettingsPage() {
         status: string;
         records_synced: number;
         duration_ms: number;
-        error_message: string | null;
+        error: string | null;
       }>(),
     supabase
       .from('pawoon_transactions')
