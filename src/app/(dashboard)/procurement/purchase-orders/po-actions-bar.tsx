@@ -11,6 +11,7 @@ import {
   Send,
   ShoppingCart,
   XCircle,
+  Zap,
 } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import {
@@ -21,10 +22,12 @@ import {
   markPOOrdered,
   rejectPO,
   receivePO,
+  sendPOWhatsApp,
   submitPO,
 } from '@/lib/actions/po.actions';
 import { POFormDialog, type BahanOption, type POFormInitial, type SupplierOption } from './po-form-dialog';
 import { POReceiveDialog, type ReceiveItem } from './po-receive-dialog';
+import type { WaProvider } from '@/lib/wa/types';
 
 export type POStatusValue =
   | 'draft'
@@ -59,6 +62,7 @@ interface Props {
   suppliers: SupplierOption[];
   bahanOptions: BahanOption[];
   outlets: string[];
+  waProviders: WaProvider[];
 }
 
 function buildWaMessage(po: POMeta) {
@@ -87,10 +91,18 @@ function buildWaMessage(po: POMeta) {
   return lines.join('\n');
 }
 
-export function POActionsBar({ po, permissions, suppliers, bahanOptions, outlets }: Props) {
+export function POActionsBar({
+  po,
+  permissions,
+  suppliers,
+  bahanOptions,
+  outlets,
+  waProviders,
+}: Props) {
   const router = useRouter();
   const [pending, startTransition] = useTransition();
   const [error, setError] = useState<string | null>(null);
+  const [waInfo, setWaInfo] = useState<string | null>(null);
   const [editOpen, setEditOpen] = useState(false);
   const [editInitial, setEditInitial] = useState<POFormInitial | null>(null);
   const [receiveOpen, setReceiveOpen] = useState(false);
@@ -147,6 +159,22 @@ export function POActionsBar({ po, permissions, suppliers, bahanOptions, outlets
     window.open(`https://wa.me/${digits}?text=${text}`, '_blank', 'noopener');
   }
 
+  function sendViaGateway(provider: WaProvider) {
+    setError(null);
+    setWaInfo(null);
+    startTransition(async () => {
+      const res = await sendPOWhatsApp(po.id, provider);
+      if ('error' in res && res.error) {
+        setError(`${provider}: ${res.error}`);
+        return;
+      }
+      setWaInfo(
+        `Berhasil kirim via ${provider}${res.data?.messageId ? ` (msg ${res.data.messageId})` : ''}`,
+      );
+      router.refresh();
+    });
+  }
+
   return (
     <div className="rounded-xl bg-surface p-5 shadow-card">
       <h2 className="mb-3 text-sm font-semibold uppercase tracking-wide text-text-muted">Aksi</h2>
@@ -189,10 +217,42 @@ export function POActionsBar({ po, permissions, suppliers, bahanOptions, outlets
         {(po.status === 'approved' || po.status === 'wa_sent') && permissions.create ? (
           <>
             {permissions.sendWa ? (
-              <Button size="sm" variant="lime" onClick={openWA}>
-                <MessageCircle className="h-3 w-3" strokeWidth={1.5} />
-                Kirim WhatsApp
-              </Button>
+              <>
+                <Button size="sm" variant="lime" onClick={openWA} disabled={pending}>
+                  <MessageCircle className="h-3 w-3" strokeWidth={1.5} />
+                  Buka WA Manual
+                </Button>
+                {waProviders.includes('fonnte') ? (
+                  <Button
+                    size="sm"
+                    variant="lime"
+                    onClick={() => sendViaGateway('fonnte')}
+                    disabled={pending}
+                  >
+                    {pending ? (
+                      <Loader2 className="h-3 w-3 animate-spin" strokeWidth={1.5} />
+                    ) : (
+                      <Zap className="h-3 w-3" strokeWidth={1.5} />
+                    )}
+                    Kirim via Fonnte
+                  </Button>
+                ) : null}
+                {waProviders.includes('kirimchat') ? (
+                  <Button
+                    size="sm"
+                    variant="lime"
+                    onClick={() => sendViaGateway('kirimchat')}
+                    disabled={pending}
+                  >
+                    {pending ? (
+                      <Loader2 className="h-3 w-3 animate-spin" strokeWidth={1.5} />
+                    ) : (
+                      <Zap className="h-3 w-3" strokeWidth={1.5} />
+                    )}
+                    Kirim via KirimChat
+                  </Button>
+                ) : null}
+              </>
             ) : null}
             <Button
               size="sm"
@@ -243,6 +303,9 @@ export function POActionsBar({ po, permissions, suppliers, bahanOptions, outlets
 
       {error ? (
         <p className="mt-3 rounded-lg bg-danger/10 px-3 py-2 text-sm text-danger">{error}</p>
+      ) : null}
+      {waInfo ? (
+        <p className="mt-3 rounded-lg bg-success/10 px-3 py-2 text-sm text-success">{waInfo}</p>
       ) : null}
 
       {permissions.create ? (

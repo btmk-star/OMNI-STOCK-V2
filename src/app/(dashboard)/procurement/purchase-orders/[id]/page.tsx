@@ -5,6 +5,7 @@ import { Badge } from '@/components/ui/badge';
 import { createClient } from '@/lib/supabase/server';
 import { hasPermission, type Role } from '@/config/roles';
 import { formatCurrency, formatDate, formatDateTime, formatNumber } from '@/lib/utils/format';
+import { availableProviders } from '@/lib/wa';
 import { POActionsBar } from '../po-actions-bar';
 import type { BahanOption, SupplierOption } from '../po-form-dialog';
 
@@ -228,6 +229,7 @@ export default async function PODetailPage({
         suppliers={(supplierList ?? []) as SupplierOption[]}
         bahanOptions={(bahanList ?? []) as BahanOption[]}
         outlets={outletIds}
+        waProviders={availableProviders()}
       />
 
       {po.os_suppliers ? (

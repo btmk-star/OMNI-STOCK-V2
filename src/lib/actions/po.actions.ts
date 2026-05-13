@@ -4,6 +4,7 @@ import { revalidatePath } from 'next/cache';
 import { z } from 'zod';
 import { createClient } from '@/lib/supabase/server';
 import { hasPermission, type Permission, type Role } from '@/config/roles';
+import { sendWhatsApp, type WaProvider } from '@/lib/wa';
 
 type ActionResult<T = unknown> =
   | { data: T; error?: never }
@@ -369,6 +370,166 @@ export async function receivePO(
   revalidatePath('/procurement/delivery');
   revalidatePath('/procurement/po-logs');
   return { data: { id, status: newStatus } };
+}
+
+interface POSendableInfo {
+  id: string;
+  status: POStatus;
+  supplier_name: string | null;
+  supplier_whatsapp: string | null;
+  outlet_ids: string[] | null;
+  notes: string | null;
+  expected_delivery: string | null;
+  total_amount: number | null;
+  items: Array<{
+    bahan_name: string | null;
+    qty: number;
+    satuan: string | null;
+    harga_satuan: number | null;
+    subtotal: number | null;
+  }>;
+}
+
+async function fetchPOForSend(id: string): Promise<POSendableInfo | null> {
+  const supabase = await createClient();
+  const { data: header } = await supabase
+    .from('os_purchase_orders')
+    .select(
+      'id,status,outlet_ids,notes,expected_delivery,total_amount,os_suppliers(name,whatsapp)',
+    )
+    .eq('id', id)
+    .maybeSingle<{
+      id: string;
+      status: POStatus;
+      outlet_ids: string[] | null;
+      notes: string | null;
+      expected_delivery: string | null;
+      total_amount: number | null;
+      os_suppliers: { name: string; whatsapp: string | null } | null;
+    }>();
+  if (!header) return null;
+
+  const { data: itemsRaw } = await supabase
+    .from('os_po_items')
+    .select('qty,satuan,harga_satuan,subtotal,os_bahan_baku(name)')
+    .eq('po_id', id)
+    .order('created_at');
+  const items = ((itemsRaw ?? []) as unknown as Array<{
+    qty: number | string;
+    satuan: string | null;
+    harga_satuan: number | string | null;
+    subtotal: number | string | null;
+    os_bahan_baku: { name: string } | null;
+  }>).map((it) => ({
+    bahan_name: it.os_bahan_baku?.name ?? null,
+    qty: Number(it.qty),
+    satuan: it.satuan,
+    harga_satuan: it.harga_satuan != null ? Number(it.harga_satuan) : null,
+    subtotal: it.subtotal != null ? Number(it.subtotal) : null,
+  }));
+
+  return {
+    ...header,
+    supplier_name: header.os_suppliers?.name ?? null,
+    supplier_whatsapp: header.os_suppliers?.whatsapp ?? null,
+    items,
+  };
+}
+
+function buildPOMessage(po: POSendableInfo): string {
+  const lines: string[] = [];
+  lines.push(`Halo ${po.supplier_name ?? 'Supplier'},`);
+  lines.push('');
+  lines.push(`Mohon disiapkan PO berikut:`);
+  lines.push(`*${po.id}*`);
+  if (po.expected_delivery) lines.push(`Estimasi kirim: ${po.expected_delivery}`);
+  if (po.outlet_ids && po.outlet_ids.length > 0) {
+    lines.push(`Outlet tujuan: ${po.outlet_ids.join(', ')}`);
+  }
+  lines.push('');
+  lines.push('*Detail Item:*');
+  po.items.forEach((it, idx) => {
+    const qtyStr = `${it.qty}${it.satuan ? ` ${it.satuan}` : ''}`;
+    const priceStr =
+      it.harga_satuan != null
+        ? ` @ Rp ${it.harga_satuan.toLocaleString('id-ID')}`
+        : '';
+    lines.push(`${idx + 1}. ${it.bahan_name ?? '—'}: ${qtyStr}${priceStr}`);
+  });
+  if (po.total_amount != null) {
+    lines.push('');
+    lines.push(`*Total: Rp ${po.total_amount.toLocaleString('id-ID')}*`);
+  }
+  if (po.notes) {
+    lines.push('');
+    lines.push(`Catatan: ${po.notes}`);
+  }
+  lines.push('');
+  lines.push('Mohon konfirmasi ketersediaan & jadwal kirim. Terima kasih.');
+  return lines.join('\n');
+}
+
+export async function sendPOWhatsApp(
+  id: string,
+  provider: WaProvider,
+): Promise<ActionResult<{ id: string; provider: WaProvider; messageId?: string }>> {
+  const auth = await authorize('po.send_wa');
+  if ('error' in auth) return { error: auth.error };
+
+  const po = await fetchPOForSend(id);
+  if (!po) return { error: 'PO tidak ditemukan' };
+  if (!['approved', 'wa_sent', 'ordered'].includes(po.status)) {
+    return {
+      error: `PO status "${po.status}" — WA send hanya untuk approved/wa_sent/ordered`,
+    };
+  }
+  if (!po.supplier_whatsapp) {
+    return { error: 'Supplier belum punya WhatsApp number' };
+  }
+
+  const message = buildPOMessage(po);
+  const result = await sendWhatsApp(provider, {
+    to: po.supplier_whatsapp,
+    message,
+  });
+
+  if (!result.ok) {
+    await logPO({
+      poId: id,
+      action: 'wa_send_failed',
+      ctx: auth.ok,
+      notes: `${provider}: ${result.errorMessage ?? 'unknown error'}`,
+    });
+    return { error: `Gagal kirim via ${provider}: ${result.errorMessage ?? 'unknown'}` };
+  }
+
+  const supabase = await createClient();
+  const newStatus: POStatus = po.status === 'approved' ? 'wa_sent' : po.status;
+  await supabase
+    .from('os_purchase_orders')
+    .update({
+      status: newStatus,
+      wa_sent_at: new Date().toISOString(),
+      wa_sent_to: po.supplier_whatsapp,
+      wa_send_method: provider,
+      wa_template_text: message,
+      updated_at: new Date().toISOString(),
+    })
+    .eq('id', id);
+
+  await logPO({
+    poId: id,
+    action: 'wa_send',
+    ctx: auth.ok,
+    oldStatus: po.status,
+    newStatus,
+    notes: `via ${provider}${result.providerMessageId ? ` (msg ${result.providerMessageId})` : ''}`,
+  });
+
+  revalidatePath('/procurement/purchase-orders');
+  revalidatePath(`/procurement/purchase-orders/${id}`);
+  revalidatePath('/procurement/po-logs');
+  return { data: { id, provider, messageId: result.providerMessageId } };
 }
 
 export async function getPOItems(id: string): Promise<
