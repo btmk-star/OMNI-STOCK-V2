@@ -3,11 +3,16 @@
 import Link from 'next/link';
 import { useRouter, useSearchParams } from 'next/navigation';
 import { useState, useTransition } from 'react';
-import { Loader2, Search, ChevronRight } from 'lucide-react';
+import { ChevronRight, Loader2, Plus, Search } from 'lucide-react';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { formatCurrency, formatDate } from '@/lib/utils/format';
+import {
+  POFormDialog,
+  type BahanOption,
+  type SupplierOption,
+} from './po-form-dialog';
 
 export interface POHeader {
   id: string;
@@ -40,7 +45,10 @@ interface Props {
   query: string;
   statusFilter: string;
   supplierFilter: string;
-  suppliers: Array<{ id: string; name: string }>;
+  suppliers: SupplierOption[];
+  bahanOptions: BahanOption[];
+  outlets: string[];
+  canCreate: boolean;
   fetchError: string | null;
 }
 
@@ -87,6 +95,9 @@ export function POTable({
   statusFilter,
   supplierFilter,
   suppliers,
+  bahanOptions,
+  outlets,
+  canCreate,
   fetchError,
 }: Props) {
   const router = useRouter();
@@ -95,6 +106,7 @@ export function POTable({
   const [status, setStatus] = useState(statusFilter);
   const [supplier, setSupplier] = useState(supplierFilter);
   const [isPending, startTransition] = useTransition();
+  const [dialogOpen, setDialogOpen] = useState(false);
   const totalPages = Math.max(1, Math.ceil(total / pageSize));
   const hasFilter = Boolean(query || statusFilter || supplierFilter);
 
@@ -123,11 +135,19 @@ export function POTable({
 
   return (
     <div className="flex flex-col gap-5">
-      <header className="flex flex-col gap-1">
-        <h1 className="text-2xl font-bold text-midnight dark:text-cream">Purchase Orders</h1>
-        <p className="text-sm text-text-secondary">
-          {total.toLocaleString('id-ID')} PO · termasuk migrasi V1.6 (ID prefix `MG-`)
-        </p>
+      <header className="flex flex-wrap items-start justify-between gap-3">
+        <div>
+          <h1 className="text-2xl font-bold text-midnight dark:text-cream">Purchase Orders</h1>
+          <p className="text-sm text-text-secondary">
+            {total.toLocaleString('id-ID')} PO · termasuk migrasi V1.6 (ID prefix `MG-`)
+          </p>
+        </div>
+        {canCreate ? (
+          <Button size="sm" onClick={() => setDialogOpen(true)}>
+            <Plus className="h-4 w-4" strokeWidth={1.5} />
+            Buat PO
+          </Button>
+        ) : null}
       </header>
 
       {fetchError ? (
@@ -215,6 +235,11 @@ export function POTable({
                       <Button size="sm" variant="outline" className="mt-3" onClick={reset}>
                         Reset filter
                       </Button>
+                    ) : canCreate ? (
+                      <Button size="sm" className="mt-3" onClick={() => setDialogOpen(true)}>
+                        <Plus className="h-4 w-4" strokeWidth={1.5} />
+                        Buat PO Pertama
+                      </Button>
                     ) : null}
                   </td>
                 </tr>
@@ -238,9 +263,7 @@ export function POTable({
                         {firstOutlet ? `${firstOutlet}${outletExtra}` : '—'}
                       </td>
                       <td className="px-4 py-3">
-                        <Badge variant={statusBadge(po.status)}>
-                          {STATUS_LABEL[po.status]}
-                        </Badge>
+                        <Badge variant={statusBadge(po.status)}>{STATUS_LABEL[po.status]}</Badge>
                       </td>
                       <td className="px-4 py-3 text-right font-mono">
                         {po.total_amount != null ? formatCurrency(po.total_amount) : '—'}
@@ -294,6 +317,19 @@ export function POTable({
           </div>
         ) : null}
       </div>
+
+      {canCreate ? (
+        <POFormDialog
+          open={dialogOpen}
+          onOpenChange={setDialogOpen}
+          suppliers={suppliers}
+          bahanOptions={bahanOptions}
+          outlets={outlets}
+          onSuccess={(id) =>
+            router.push(`/procurement/purchase-orders/${encodeURIComponent(id)}`)
+          }
+        />
+      ) : null}
     </div>
   );
 }

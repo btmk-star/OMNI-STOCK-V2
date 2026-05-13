@@ -3,7 +3,10 @@ import { notFound } from 'next/navigation';
 import { ChevronLeft } from 'lucide-react';
 import { Badge } from '@/components/ui/badge';
 import { createClient } from '@/lib/supabase/server';
+import { hasPermission, type Role } from '@/config/roles';
 import { formatCurrency, formatDate, formatDateTime, formatNumber } from '@/lib/utils/format';
+import { POActionsBar } from '../po-actions-bar';
+import type { BahanOption, SupplierOption } from '../po-form-dialog';
 
 interface POHeaderRow {
   id: string;
@@ -110,6 +113,45 @@ export default async function PODetailPage({
 
   if (!po) notFound();
 
+  const { data: userData } = await supabase.auth.getUser();
+  let role: Role | null = null;
+  if (userData.user) {
+    const { data: profile } = await supabase
+      .from('user_profiles')
+      .select('role')
+      .eq('id', userData.user.id)
+      .single<{ role: Role }>();
+    role = profile?.role ?? null;
+  }
+  const permissions = {
+    create: hasPermission(role, 'po.create'),
+    approve: hasPermission(role, 'po.approve'),
+    sendWa: hasPermission(role, 'po.send_wa'),
+    receive: hasPermission(role, 'delivery.receive'),
+  };
+
+  const [{ data: supplierList }, { data: bahanList }, { data: outletList }] = await Promise.all([
+    supabase
+      .from('os_suppliers')
+      .select('id,name,whatsapp')
+      .eq('is_active', true)
+      .order('name'),
+    supabase
+      .from('os_bahan_baku')
+      .select('id,name,satuan_dapur,harga_beli')
+      .eq('is_active', true)
+      .order('name')
+      .limit(2000),
+    supabase
+      .from('pawoon_outlets')
+      .select('pawoon_id,name')
+      .eq('is_active', true)
+      .order('name'),
+  ]);
+  const outletIds = (outletList ?? [])
+    .map((o) => (o.pawoon_id as string) ?? (o.name as string))
+    .filter(Boolean);
+
   const { data: items } = await supabase
     .from('os_po_items')
     .select('id,bahan_id,qty,satuan,harga_satuan,subtotal,qty_received,os_bahan_baku(name,satuan_dapur)')
@@ -169,6 +211,24 @@ export default async function PODetailPage({
           value={po.expected_delivery ? formatDate(po.expected_delivery) : '—'}
         />
       </div>
+
+      <POActionsBar
+        po={{
+          id: po.id,
+          supplier_id: po.supplier_id ?? '',
+          supplier_name: po.os_suppliers?.name ?? null,
+          supplier_whatsapp: po.os_suppliers?.whatsapp ?? null,
+          outlet_ids: po.outlet_ids ?? [],
+          notes: po.notes,
+          expected_delivery: po.expected_delivery,
+          status: po.status,
+          total_amount: po.total_amount,
+        }}
+        permissions={permissions}
+        suppliers={(supplierList ?? []) as SupplierOption[]}
+        bahanOptions={(bahanList ?? []) as BahanOption[]}
+        outlets={outletIds}
+      />
 
       {po.os_suppliers ? (
         <div className="rounded-xl bg-surface p-5 shadow-card">

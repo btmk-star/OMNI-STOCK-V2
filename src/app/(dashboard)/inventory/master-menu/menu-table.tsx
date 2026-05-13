@@ -2,11 +2,13 @@
 
 import { useRouter, useSearchParams } from 'next/navigation';
 import { useState, useTransition } from 'react';
-import { Loader2, Search } from 'lucide-react';
+import { Loader2, Pencil, Plus, Power, PowerOff, Search } from 'lucide-react';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { formatCurrency } from '@/lib/utils/format';
+import { toggleMenuActive } from '@/lib/actions/menu.actions';
+import { MenuFormDialog } from './menu-form-dialog';
 
 export interface MenuRow {
   id: string;
@@ -33,9 +35,12 @@ interface Props {
   kategoriFilter: string;
   channelFilter: string;
   pawoonFilter: string;
+  showInactive: boolean;
   distinctOutlets: string[];
   distinctKategoris: string[];
   distinctChannels: string[];
+  recipes: Array<{ id: string; name: string; total_cogs: number | null }>;
+  canManage: boolean;
   fetchError: string | null;
 }
 
@@ -63,9 +68,12 @@ export function MenuTable({
   kategoriFilter,
   channelFilter,
   pawoonFilter,
+  showInactive,
   distinctOutlets,
   distinctKategoris,
   distinctChannels,
+  recipes,
+  canManage,
   fetchError,
 }: Props) {
   const router = useRouter();
@@ -75,10 +83,15 @@ export function MenuTable({
   const [kategori, setKategori] = useState(kategoriFilter);
   const [channel, setChannel] = useState(channelFilter);
   const [pawoon, setPawoon] = useState(pawoonFilter);
+  const [includeInactive, setIncludeInactive] = useState(showInactive);
   const [isPending, startTransition] = useTransition();
+  const [actionPending, startActionTransition] = useTransition();
+  const [dialogOpen, setDialogOpen] = useState(false);
+  const [editing, setEditing] = useState<MenuRow | null>(null);
+  const [actionError, setActionError] = useState<string | null>(null);
 
   const totalPages = Math.max(1, Math.ceil(total / pageSize));
-  const hasFilter = Boolean(query || outletFilter || kategoriFilter || channelFilter || pawoonFilter);
+  const hasFilter = Boolean(query || outletFilter || kategoriFilter || channelFilter || pawoonFilter || showInactive);
 
   function applyFilters(e: React.FormEvent) {
     e.preventDefault();
@@ -88,6 +101,7 @@ export function MenuTable({
     if (kategori) params.set('kategori', kategori);
     if (channel) params.set('channel', channel);
     if (pawoon) params.set('pawoon', pawoon);
+    if (includeInactive) params.set('show', 'all');
     params.set('page', '1');
     startTransition(() => router.push(`/inventory/master-menu?${params.toString()}`));
   }
@@ -98,6 +112,7 @@ export function MenuTable({
     setKategori('');
     setChannel('');
     setPawoon('');
+    setIncludeInactive(false);
     startTransition(() => router.push('/inventory/master-menu'));
   }
 
@@ -107,19 +122,50 @@ export function MenuTable({
     startTransition(() => router.push(`/inventory/master-menu?${params.toString()}`));
   }
 
+  function openCreate() {
+    setEditing(null);
+    setDialogOpen(true);
+  }
+  function openEdit(row: MenuRow) {
+    setEditing(row);
+    setDialogOpen(true);
+  }
+  function toggleActive(row: MenuRow) {
+    setActionError(null);
+    startActionTransition(async () => {
+      const res = await toggleMenuActive(row.id, !row.is_active);
+      if ('error' in res && res.error) {
+        setActionError(res.error);
+        return;
+      }
+      router.refresh();
+    });
+  }
+
   return (
     <div className="flex flex-col gap-5">
-      <header className="flex flex-col gap-1">
-        <h1 className="text-2xl font-bold text-midnight dark:text-cream">Master Menu</h1>
-        <p className="text-sm text-text-secondary">
-          {total.toLocaleString('id-ID')} menu · linked ke Pawoon products + recipe per menu
-        </p>
+      <header className="flex flex-wrap items-start justify-between gap-3">
+        <div>
+          <h1 className="text-2xl font-bold text-midnight dark:text-cream">Master Menu</h1>
+          <p className="text-sm text-text-secondary">
+            {total.toLocaleString('id-ID')} menu · linked ke Pawoon products + recipe per menu
+          </p>
+        </div>
+        {canManage ? (
+          <Button size="sm" onClick={openCreate}>
+            <Plus className="h-4 w-4" strokeWidth={1.5} />
+            Tambah Menu
+          </Button>
+        ) : null}
       </header>
 
       {fetchError ? (
         <p className="rounded-lg bg-danger/10 px-3 py-2 text-sm text-danger">
           Gagal load: {fetchError}
         </p>
+      ) : null}
+      {actionError ? (
+        <p className="rounded-lg bg-danger/10 px-3 py-2 text-sm text-danger">{actionError}</p>
       ) : null}
 
       <div className="overflow-hidden rounded-xl bg-surface shadow-card">
@@ -184,6 +230,15 @@ export function MenuTable({
             <option value="mapped">✓ Ter-link</option>
             <option value="unmapped">⚠ Manual</option>
           </select>
+          <label className="flex items-center gap-2 text-xs text-text-secondary whitespace-nowrap">
+            <input
+              type="checkbox"
+              checked={includeInactive}
+              onChange={(e) => setIncludeInactive(e.target.checked)}
+              className="h-4 w-4 rounded border-border-default text-teal focus-visible:ring-teal/30"
+            />
+            Inactive
+          </label>
           <div className="flex gap-2">
             <Button type="submit" size="sm" disabled={isPending}>
               {isPending ? <Loader2 className="h-4 w-4 animate-spin" /> : null}
@@ -211,18 +266,24 @@ export function MenuTable({
                 <th className="px-4 py-3 text-right">COGS</th>
                 <th className="px-4 py-3 text-right">Margin</th>
                 <th className="px-4 py-3 text-left">Pawoon</th>
+                {canManage ? <th className="px-4 py-3 text-right">Aksi</th> : null}
               </tr>
             </thead>
             <tbody>
               {initial.length === 0 ? (
                 <tr>
-                  <td colSpan={10} className="px-4 py-16 text-center">
+                  <td colSpan={canManage ? 11 : 10} className="px-4 py-16 text-center">
                     <p className="text-base font-medium text-forest dark:text-cream">
                       {hasFilter ? 'Tidak ada menu cocok' : 'Belum ada menu'}
                     </p>
                     {hasFilter ? (
                       <Button size="sm" variant="outline" className="mt-3" onClick={reset}>
                         Reset filter
+                      </Button>
+                    ) : canManage ? (
+                      <Button size="sm" className="mt-3" onClick={openCreate}>
+                        <Plus className="h-4 w-4" strokeWidth={1.5} />
+                        Tambah Menu Pertama
                       </Button>
                     ) : null}
                   </td>
@@ -231,7 +292,9 @@ export function MenuTable({
                 initial.map((m) => (
                   <tr
                     key={m.id}
-                    className="border-b border-border-default/50 text-sm hover:bg-mint/30"
+                    className={`border-b border-border-default/50 text-sm hover:bg-mint/30 ${
+                      !m.is_active ? 'opacity-50' : ''
+                    }`}
                   >
                     <td className="px-4 py-3 font-mono text-[12px] text-teal">{m.id}</td>
                     <td className="px-4 py-3 text-text-primary">{m.name}</td>
@@ -246,9 +309,7 @@ export function MenuTable({
                     <td className="px-4 py-3 font-mono text-[12px] text-text-muted">
                       {m.outlet_id ?? '—'}
                     </td>
-                    <td className="px-4 py-3 text-text-secondary">
-                      {m.os_recipes?.name ?? '—'}
-                    </td>
+                    <td className="px-4 py-3 text-text-secondary">{m.os_recipes?.name ?? '—'}</td>
                     <td className="px-4 py-3 text-right font-mono">
                       {m.harga_jual != null ? formatCurrency(m.harga_jual) : '—'}
                     </td>
@@ -269,6 +330,36 @@ export function MenuTable({
                         <Badge variant="syncStale">Manual</Badge>
                       )}
                     </td>
+                    {canManage ? (
+                      <td className="px-4 py-3 text-right">
+                        <div className="inline-flex gap-1">
+                          <Button
+                            type="button"
+                            size="sm"
+                            variant="ghost"
+                            disabled={actionPending}
+                            onClick={() => openEdit(m)}
+                            title="Edit"
+                          >
+                            <Pencil className="h-3 w-3" strokeWidth={1.5} />
+                          </Button>
+                          <Button
+                            type="button"
+                            size="sm"
+                            variant="ghost"
+                            disabled={actionPending}
+                            onClick={() => toggleActive(m)}
+                            title={m.is_active ? 'Nonaktifkan' : 'Aktifkan'}
+                          >
+                            {m.is_active ? (
+                              <PowerOff className="h-3 w-3 text-danger" strokeWidth={1.5} />
+                            ) : (
+                              <Power className="h-3 w-3 text-success" strokeWidth={1.5} />
+                            )}
+                          </Button>
+                        </div>
+                      </td>
+                    ) : null}
                   </tr>
                 ))
               )}
@@ -302,6 +393,20 @@ export function MenuTable({
           </div>
         ) : null}
       </div>
+
+      {canManage ? (
+        <MenuFormDialog
+          key={editing?.id ?? 'create'}
+          open={dialogOpen}
+          onOpenChange={setDialogOpen}
+          initial={editing}
+          recipes={recipes}
+          outlets={distinctOutlets}
+          kategoriOptions={distinctKategoris}
+          channelOptions={distinctChannels}
+          onSuccess={() => router.refresh()}
+        />
+      ) : null}
     </div>
   );
 }
