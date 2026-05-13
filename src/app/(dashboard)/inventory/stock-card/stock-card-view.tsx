@@ -86,7 +86,8 @@ export function StockCardView({
         <div>
           <h1 className="text-2xl font-bold text-midnight dark:text-cream">Kartu Stok</h1>
           <p className="text-sm text-text-secondary">
-            Real-time dari Pawoon · {formatDate(periodDate)} · {total.toLocaleString('id-ID')} produk
+            Snapshot end-of-day dari Pawoon · {formatDate(periodDate)} ·{' '}
+            {total.toLocaleString('id-ID')} produk
           </p>
         </div>
         <div className="flex items-center gap-2">
@@ -235,7 +236,7 @@ function EmptyState({
       <p className="max-w-md text-sm text-text-muted">
         {hasFilter
           ? 'Coba ubah filter outlet atau tanggal.'
-          : 'Cron otomatis fetch setiap 30 menit. Atau trigger sync manual sekarang.'}
+          : 'Pawoon hanya return stock card setelah outlet tutup (end-of-day). Default tampilkan H-1. Klik Sync untuk fetch ulang H-1 sampai H-3.'}
       </p>
       {!hasFilter ? (
         <Button onClick={onSync} disabled={isSyncing} variant="lime">

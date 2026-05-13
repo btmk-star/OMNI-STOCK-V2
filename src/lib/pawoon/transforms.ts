@@ -198,6 +198,28 @@ export function todayInJakarta(): string {
 }
 
 /**
+ * Hari Jakarta dikurangi `daysAgo`. Default 1 = kemarin.
+ * Pakai timestamp 12:00 UTC dari hari ini Jakarta sebagai anchor, lalu rollback hari
+ * untuk hindari boundary issue jam 00:00-07:00 WIB.
+ */
+export function daysAgoInJakarta(daysAgo = 1): string {
+  const todayKey = todayInJakarta(); // YYYY-MM-DD di Jakarta
+  // Anchor di tengah hari Jakarta (05:00 UTC = 12:00 WIB) supaya rollback selalu konsisten.
+  const anchor = new Date(`${todayKey}T05:00:00Z`);
+  anchor.setUTCDate(anchor.getUTCDate() - daysAgo);
+  return new Intl.DateTimeFormat('en-CA', {
+    year: 'numeric',
+    month: '2-digit',
+    day: '2-digit',
+    timeZone: JAKARTA_TZ,
+  }).format(anchor);
+}
+
+export function yesterdayInJakarta(): string {
+  return daysAgoInJakarta(1);
+}
+
+/**
  * Compute total pages dari Pawoon meta `{count, total, per_page}`.
  * Pawoon tidak return `last_page` atau `total_pages`, jadi compute manual.
  */

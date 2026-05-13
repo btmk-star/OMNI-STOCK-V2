@@ -2,12 +2,12 @@ import { createAdminClient } from '@/lib/supabase/admin';
 import { fetchPawoon } from './client';
 import { PAWOON_DEFAULT_PER_PAGE, PAWOON_PATHS } from './endpoints';
 import {
+  daysAgoInJakarta,
   pawoonOutletToRow,
   pawoonProductToRow,
   pawoonStockCardToRow,
   pawoonTotalPages,
   pawoonTransactionToRow,
-  todayInJakarta,
   type PawoonProductRow,
 } from './transforms';
 import type {
@@ -36,6 +36,9 @@ const BATCH_SIZE = 500;
 const PRODUCT_PAGE_SIZE = 100;
 const TRANSACTION_MAX_PAGES_PER_OUTLET = 5;
 const TRANSACTION_FALLBACK_LOOKBACK_HOURS = 24;
+// Pawoon /inventory/stockcard return end-of-day snapshot — query today selalu 0.
+// Backfill H-1 sampai H-3 supaya user bisa scroll date picker beberapa hari ke belakang.
+const STOCK_CARD_DAYS_BACK = 3;
 
 function timer() {
   const start = Date.now();
@@ -146,9 +149,12 @@ export async function runProductSync(): Promise<SyncResult> {
 export async function runStockCardSync(): Promise<SyncResult> {
   const elapsed = timer();
   const supabase = createAdminClient();
-  const periodDate = todayInJakarta();
+  // Pawoon return end-of-day snapshot — pakai H-1 sebagai default, tambah backfill ke H-2/H-3.
+  const datesToSync = Array.from({ length: STOCK_CARD_DAYS_BACK }, (_, i) =>
+    daysAgoInJakarta(i + 1),
+  );
   let totalSynced = 0;
-  const perOutletStats: Array<{ outlet_id: string; rows: number }> = [];
+  const perDateStats: Array<{ date: string; rows: number }> = [];
 
   try {
     const outletsResp = await fetchPawoon<PawoonPaginatedResponse<PawoonOutlet>>(
@@ -156,27 +162,33 @@ export async function runStockCardSync(): Promise<SyncResult> {
     );
     const activeOutlets = (outletsResp.data ?? []).filter((o) => !o.deleted_at);
 
-    for (const outlet of activeOutlets) {
-      const resp = await fetchPawoon<PawoonPaginatedResponse<PawoonStockCardRow>>(
-        PAWOON_PATHS.inventoryStockCard,
-        { query: { outlet_id: outlet.id, date: periodDate } },
-      );
-      const items = (resp.data ?? []).map((row) =>
-        pawoonStockCardToRow(row, outlet.id, periodDate),
-      );
-      for (let i = 0; i < items.length; i += BATCH_SIZE) {
-        const batch = items.slice(i, i + BATCH_SIZE);
-        const { error } = await supabase
-          .from('pawoon_stock_cards')
-          .upsert(batch as never, {
-            onConflict: 'pawoon_outlet_id,pawoon_product_id,period_date',
-          });
-        if (error) {
-          throw new Error(`pawoon_stock_cards upsert outlet ${outlet.id}: ${error.message}`);
+    for (const periodDate of datesToSync) {
+      let rowsForDate = 0;
+      for (const outlet of activeOutlets) {
+        const resp = await fetchPawoon<PawoonPaginatedResponse<PawoonStockCardRow>>(
+          PAWOON_PATHS.inventoryStockCard,
+          { query: { outlet_id: outlet.id, date: periodDate } },
+        );
+        const items = (resp.data ?? []).map((row) =>
+          pawoonStockCardToRow(row, outlet.id, periodDate),
+        );
+        for (let i = 0; i < items.length; i += BATCH_SIZE) {
+          const batch = items.slice(i, i + BATCH_SIZE);
+          const { error } = await supabase
+            .from('pawoon_stock_cards')
+            .upsert(batch as never, {
+              onConflict: 'pawoon_outlet_id,pawoon_product_id,period_date',
+            });
+          if (error) {
+            throw new Error(
+              `pawoon_stock_cards upsert outlet ${outlet.id} date ${periodDate}: ${error.message}`,
+            );
+          }
+          totalSynced += batch.length;
+          rowsForDate += batch.length;
         }
-        totalSynced += batch.length;
       }
-      perOutletStats.push({ outlet_id: outlet.id, rows: items.length });
+      perDateStats.push({ date: periodDate, rows: rowsForDate });
     }
 
     const duration_ms = elapsed();
@@ -193,7 +205,7 @@ export async function runStockCardSync(): Promise<SyncResult> {
       success: true,
       records_synced: totalSynced,
       duration_ms,
-      details: { period_date: periodDate, per_outlet: perOutletStats },
+      details: { dates_synced: datesToSync, per_date: perDateStats },
     };
   } catch (err) {
     const errMsg = err instanceof Error ? err.message : String(err);

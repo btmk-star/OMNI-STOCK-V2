@@ -1,14 +1,6 @@
 import { createClient } from '@/lib/supabase/server';
+import { yesterdayInJakarta } from '@/lib/pawoon/transforms';
 import { StockCardView, type StockCardRow } from './stock-card-view';
-
-function todayInJakarta(): string {
-  return new Intl.DateTimeFormat('en-CA', {
-    year: 'numeric',
-    month: '2-digit',
-    day: '2-digit',
-    timeZone: 'Asia/Jakarta',
-  }).format(new Date());
-}
 
 export default async function StockCardPage({
   searchParams,
@@ -18,7 +10,9 @@ export default async function StockCardPage({
   const params = await searchParams;
   const supabase = await createClient();
 
-  const periodDate = params.date ?? todayInJakarta();
+  // Pawoon stock card = snapshot end-of-day → default ke kemarin (H-1).
+  // User bisa override via date picker (sync runner backfill H-1 sampai H-3).
+  const periodDate = params.date ?? yesterdayInJakarta();
 
   let query = supabase
     .from('pawoon_stock_cards')
