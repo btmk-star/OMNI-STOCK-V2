@@ -7,7 +7,7 @@ import { hasPermission, type Role } from '@/config/roles';
 import { formatCurrency, formatDate, formatDateTime, formatNumber } from '@/lib/utils/format';
 import { availableProviders } from '@/lib/wa';
 import { POActionsBar } from '../po-actions-bar';
-import type { BahanOption, SupplierOption } from '../po-form-dialog';
+import type { BahanOption, OutletOption, SupplierOption } from '../po-form-dialog';
 
 interface POHeaderRow {
   id: string;
@@ -149,9 +149,18 @@ export default async function PODetailPage({
       .eq('is_active', true)
       .order('name'),
   ]);
-  const outletIds = (outletList ?? [])
-    .map((o) => (o.pawoon_id as string) ?? (o.name as string))
-    .filter(Boolean);
+  const outletObjs: OutletOption[] = (outletList ?? [])
+    .map((o) => {
+      const id = (o.pawoon_id as string | null) ?? (o.name as string | null);
+      const name = (o.name as string | null) ?? (o.pawoon_id as string | null);
+      return { id: id ?? '', name: name ?? '' };
+    })
+    .filter((o) => o.id);
+  const outletNameById = new Map(outletObjs.map((o) => [o.id, o.name]));
+  const headerOutletNames =
+    po.outlet_ids && po.outlet_ids.length > 0
+      ? po.outlet_ids.map((oid) => outletNameById.get(oid) ?? oid).join(', ')
+      : '—';
 
   const { data: items } = await supabase
     .from('os_po_items')
@@ -190,7 +199,7 @@ export default async function PODetailPage({
             PO ke {po.os_suppliers?.name ?? po.supplier_id ?? '—'}
           </h1>
           <p className="text-sm text-text-secondary">
-            {itemRows.length} item · Outlet: {po.outlet_ids?.join(', ') ?? '—'}
+            {itemRows.length} item · Outlet: {headerOutletNames}
             {po.created_by_name ? ` · Dibuat oleh ${po.created_by_name}` : ''}
           </p>
         </div>
@@ -228,7 +237,7 @@ export default async function PODetailPage({
         permissions={permissions}
         suppliers={(supplierList ?? []) as SupplierOption[]}
         bahanOptions={(bahanList ?? []) as BahanOption[]}
-        outlets={outletIds}
+        outlets={outletObjs}
         waProviders={availableProviders()}
       />
 

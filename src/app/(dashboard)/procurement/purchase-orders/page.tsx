@@ -1,7 +1,7 @@
 import { createClient } from '@/lib/supabase/server';
 import { hasPermission, type Role } from '@/config/roles';
 import { POTable, type POHeader } from './po-table';
-import type { BahanOption, SupplierOption } from './po-form-dialog';
+import type { BahanOption, OutletOption, SupplierOption } from './po-form-dialog';
 
 const PAGE_SIZE = 25;
 
@@ -63,9 +63,13 @@ export default async function PurchaseOrdersPage({
       .order('name'),
   ]);
 
-  const outlets = (outletList ?? [])
-    .map((o) => (o.pawoon_id as string) ?? (o.name as string))
-    .filter(Boolean);
+  const outlets: OutletOption[] = (outletList ?? [])
+    .map((o) => {
+      const id = (o.pawoon_id as string | null) ?? (o.name as string | null);
+      const name = (o.name as string | null) ?? (o.pawoon_id as string | null);
+      return { id: id ?? '', name: name ?? '' };
+    })
+    .filter((o) => o.id);
 
   return (
     <POTable

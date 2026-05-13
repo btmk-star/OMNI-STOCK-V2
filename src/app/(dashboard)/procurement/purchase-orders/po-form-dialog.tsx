@@ -28,6 +28,11 @@ export interface BahanOption {
   harga_beli: number | null;
 }
 
+export interface OutletOption {
+  id: string;
+  name: string;
+}
+
 export interface POFormInitial {
   id: string;
   supplier_id: string;
@@ -43,7 +48,7 @@ interface Props {
   initial?: POFormInitial | null;
   suppliers: SupplierOption[];
   bahanOptions: BahanOption[];
-  outlets: string[];
+  outlets: OutletOption[];
   onSuccess?: (id: string) => void;
 }
 
@@ -190,20 +195,21 @@ export function POFormDialog({
                 ) : (
                   outlets.map((o) => (
                     <label
-                      key={o}
-                      className={`inline-flex cursor-pointer items-center gap-1 rounded-full border px-2 py-0.5 text-[11px] font-mono ${
-                        outletIds.includes(o)
+                      key={o.id}
+                      className={`inline-flex cursor-pointer items-center gap-1 rounded-full border px-3 py-1 text-xs ${
+                        outletIds.includes(o.id)
                           ? 'border-teal bg-teal text-white'
-                          : 'border-border-default bg-surface text-text-muted'
+                          : 'border-border-default bg-surface text-text-muted hover:border-teal/40'
                       }`}
+                      title={o.id}
                     >
                       <input
                         type="checkbox"
-                        checked={outletIds.includes(o)}
-                        onChange={() => toggleOutlet(o)}
+                        checked={outletIds.includes(o.id)}
+                        onChange={() => toggleOutlet(o.id)}
                         className="hidden"
                       />
-                      {o}
+                      {o.name || o.id}
                     </label>
                   ))
                 )}

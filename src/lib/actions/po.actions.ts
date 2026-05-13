@@ -29,7 +29,7 @@ const POItemSchema = z.object({
 
 const POSchema = z.object({
   supplier_id: z.string().trim().min(1, 'Supplier wajib').max(20),
-  outlet_ids: z.array(z.string().trim().max(20)).default([]),
+  outlet_ids: z.array(z.string().trim().min(1).max(50)).default([]),
   notes: z.string().trim().max(2000).optional().nullable(),
   expected_delivery: z.string().optional().nullable(),
   items: z.array(POItemSchema).min(1, 'Minimal 1 item'),
@@ -378,6 +378,7 @@ interface POSendableInfo {
   supplier_name: string | null;
   supplier_whatsapp: string | null;
   outlet_ids: string[] | null;
+  outlet_names: string[];
   notes: string | null;
   expected_delivery: string | null;
   total_amount: number | null;
@@ -428,10 +429,26 @@ async function fetchPOForSend(id: string): Promise<POSendableInfo | null> {
     subtotal: it.subtotal != null ? Number(it.subtotal) : null,
   }));
 
+  let outlet_names: string[] = [];
+  if (header.outlet_ids && header.outlet_ids.length > 0) {
+    const { data: outletRows } = await supabase
+      .from('pawoon_outlets')
+      .select('pawoon_id,name')
+      .in('pawoon_id', header.outlet_ids);
+    const map = new Map(
+      ((outletRows ?? []) as Array<{ pawoon_id: string; name: string }>).map((o) => [
+        o.pawoon_id,
+        o.name,
+      ]),
+    );
+    outlet_names = header.outlet_ids.map((oid) => map.get(oid) ?? oid);
+  }
+
   return {
     ...header,
     supplier_name: header.os_suppliers?.name ?? null,
     supplier_whatsapp: header.os_suppliers?.whatsapp ?? null,
+    outlet_names,
     items,
   };
 }
@@ -443,8 +460,8 @@ function buildPOMessage(po: POSendableInfo): string {
   lines.push(`Mohon disiapkan PO berikut:`);
   lines.push(`*${po.id}*`);
   if (po.expected_delivery) lines.push(`Estimasi kirim: ${po.expected_delivery}`);
-  if (po.outlet_ids && po.outlet_ids.length > 0) {
-    lines.push(`Outlet tujuan: ${po.outlet_ids.join(', ')}`);
+  if (po.outlet_names.length > 0) {
+    lines.push(`Outlet tujuan: ${po.outlet_names.join(', ')}`);
   }
   lines.push('');
   lines.push('*Detail Item:*');

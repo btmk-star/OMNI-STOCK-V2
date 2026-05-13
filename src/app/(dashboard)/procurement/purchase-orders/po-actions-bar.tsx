@@ -25,7 +25,13 @@ import {
   sendPOWhatsApp,
   submitPO,
 } from '@/lib/actions/po.actions';
-import { POFormDialog, type BahanOption, type POFormInitial, type SupplierOption } from './po-form-dialog';
+import {
+  POFormDialog,
+  type BahanOption,
+  type OutletOption,
+  type POFormInitial,
+  type SupplierOption,
+} from './po-form-dialog';
 import { POReceiveDialog, type ReceiveItem } from './po-receive-dialog';
 import type { WaProvider } from '@/lib/wa/types';
 
@@ -61,11 +67,11 @@ interface Props {
   };
   suppliers: SupplierOption[];
   bahanOptions: BahanOption[];
-  outlets: string[];
+  outlets: OutletOption[];
   waProviders: WaProvider[];
 }
 
-function buildWaMessage(po: POMeta) {
+function buildWaMessage(po: POMeta, outletNameById: Map<string, string>) {
   const lines: string[] = [];
   lines.push(`Halo ${po.supplier_name ?? 'Supplier'},`);
   lines.push('');
@@ -75,7 +81,8 @@ function buildWaMessage(po: POMeta) {
     lines.push(`Estimasi kirim: ${po.expected_delivery}`);
   }
   if (po.outlet_ids.length > 0) {
-    lines.push(`Outlet: ${po.outlet_ids.join(', ')}`);
+    const names = po.outlet_ids.map((oid) => outletNameById.get(oid) ?? oid);
+    lines.push(`Outlet: ${names.join(', ')}`);
   }
   if (po.total_amount != null) {
     lines.push(
@@ -107,6 +114,7 @@ export function POActionsBar({
   const [editInitial, setEditInitial] = useState<POFormInitial | null>(null);
   const [receiveOpen, setReceiveOpen] = useState(false);
   const [receiveItems, setReceiveItems] = useState<ReceiveItem[]>([]);
+  const outletNameById = new Map(outlets.map((o) => [o.id, o.name]));
 
   function run(label: string, fn: () => Promise<{ data?: unknown; error?: string }>) {
     setError(null);
@@ -155,7 +163,7 @@ export function POActionsBar({
       return;
     }
     const digits = po.supplier_whatsapp.replace(/\D/g, '');
-    const text = encodeURIComponent(buildWaMessage(po));
+    const text = encodeURIComponent(buildWaMessage(po, outletNameById));
     window.open(`https://wa.me/${digits}?text=${text}`, '_blank', 'noopener');
   }
 

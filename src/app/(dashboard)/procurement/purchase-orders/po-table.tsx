@@ -11,6 +11,7 @@ import { formatCurrency, formatDate } from '@/lib/utils/format';
 import {
   POFormDialog,
   type BahanOption,
+  type OutletOption,
   type SupplierOption,
 } from './po-form-dialog';
 
@@ -47,7 +48,7 @@ interface Props {
   supplierFilter: string;
   suppliers: SupplierOption[];
   bahanOptions: BahanOption[];
-  outlets: string[];
+  outlets: OutletOption[];
   canCreate: boolean;
   fetchError: string | null;
 }
@@ -109,6 +110,7 @@ export function POTable({
   const [dialogOpen, setDialogOpen] = useState(false);
   const totalPages = Math.max(1, Math.ceil(total / pageSize));
   const hasFilter = Boolean(query || statusFilter || supplierFilter);
+  const outletNameById = new Map(outlets.map((o) => [o.id, o.name]));
 
   function applyFilters(e: React.FormEvent) {
     e.preventDefault();
@@ -245,7 +247,10 @@ export function POTable({
                 </tr>
               ) : (
                 initial.map((po) => {
-                  const firstOutlet = po.outlet_ids?.[0];
+                  const firstOutletId = po.outlet_ids?.[0];
+                  const firstOutletName = firstOutletId
+                    ? (outletNameById.get(firstOutletId) ?? firstOutletId)
+                    : null;
                   const outletExtra =
                     po.outlet_ids && po.outlet_ids.length > 1
                       ? ` +${po.outlet_ids.length - 1}`
@@ -259,8 +264,11 @@ export function POTable({
                       <td className="px-4 py-3 text-text-primary">
                         {po.os_suppliers?.name ?? po.supplier_id ?? '—'}
                       </td>
-                      <td className="px-4 py-3 font-mono text-[12px] text-text-muted">
-                        {firstOutlet ? `${firstOutlet}${outletExtra}` : '—'}
+                      <td
+                        className="px-4 py-3 text-[13px] text-text-secondary"
+                        title={po.outlet_ids?.join(', ') ?? ''}
+                      >
+                        {firstOutletName ? `${firstOutletName}${outletExtra}` : '—'}
                       </td>
                       <td className="px-4 py-3">
                         <Badge variant={statusBadge(po.status)}>{STATUS_LABEL[po.status]}</Badge>
