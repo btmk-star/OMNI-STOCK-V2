@@ -184,8 +184,18 @@ export function BulkOpnameDialog({ open, onOpenChange, onSuccess }: Props) {
               </div>
             </div>
 
+            {Object.keys(preview.metadata).length > 0 ? (
+              <div className="rounded-lg bg-mint/30 px-3 py-2 text-[11px] text-forest">
+                <strong>Info dari file:</strong>{' '}
+                {preview.metadata.outlet ? `Outlet="${preview.metadata.outlet}" · ` : ''}
+                {preview.metadata.tanggal ? `Tanggal="${preview.metadata.tanggal}" · ` : ''}
+                {preview.metadata.status_produk ? `Status Produk="${preview.metadata.status_produk}" · ` : ''}
+                {preview.metadata.status_stock ? `Status Stock="${preview.metadata.status_stock}"` : ''}
+              </div>
+            ) : null}
+
             <div className="rounded-lg bg-cream/40 px-3 py-2 text-[11px] text-text-secondary">
-              <strong>Kolom terdeteksi:</strong>{' '}
+              <strong>Kolom terdeteksi (header baris {preview.header_row_index}):</strong>{' '}
               {preview.detected_columns.id ? `ID="${preview.detected_columns.id}" · ` : ''}
               {preview.detected_columns.name ? `Nama="${preview.detected_columns.name}" · ` : ''}
               {preview.detected_columns.qty ? `Qty="${preview.detected_columns.qty}"` : ''}

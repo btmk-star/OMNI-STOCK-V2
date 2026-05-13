@@ -108,6 +108,8 @@ export interface BulkPreviewResult {
   matched: BulkPreviewMatched[];
   unmatched: BulkPreviewUnmatched[];
   detected_columns: { id?: string; name?: string; qty?: string; outlet?: string };
+  metadata: { outlet?: string; tanggal?: string; [key: string]: string | undefined };
+  header_row_index: number;
   warnings: string[];
   total_data_rows: number;
   source_filename: string;
@@ -230,6 +232,8 @@ export async function previewBulkOpname(
       matched,
       unmatched,
       detected_columns: parsed.detected_columns,
+      metadata: parsed.metadata,
+      header_row_index: parsed.header_row_index,
       warnings: parsed.warnings,
       total_data_rows: parsed.total_data_rows,
       source_filename: file.name,

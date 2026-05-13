@@ -16,8 +16,14 @@ export interface ParseResult {
     qty?: string;
     outlet?: string;
   };
+  metadata: {
+    outlet?: string;
+    tanggal?: string;
+    [key: string]: string | undefined;
+  };
   warnings: string[];
   total_data_rows: number;
+  header_row_index: number; // 1-indexed (row di Excel)
 }
 
 const PATTERNS = {
@@ -78,6 +84,62 @@ function coerceString(v: unknown): string | null {
   return s.length > 0 ? s : null;
 }
 
+/**
+ * Cari row index yang paling kemungkinan adalah header data table.
+ * Strategi: scan 20 baris pertama, beri skor berdasarkan jumlah pattern kolom yang ditemukan.
+ * Pawoon Kartu Stok export punya 7 baris metadata (Outlet/Tanggal/Status/dst) dulu,
+ * baru di row 8 muncul header asli (Produk | Kategori | Stok Awal | dst).
+ */
+function findHeaderRow(arrayJson: unknown[][]): number {
+  let bestIdx = 0;
+  let bestScore = 0;
+  const limit = Math.min(20, arrayJson.length);
+  for (let i = 0; i < limit; i++) {
+    const row = arrayJson[i];
+    if (!Array.isArray(row)) continue;
+    const cells = row.map((c) => String(c ?? '').toLowerCase().trim()).filter(Boolean);
+    if (cells.length < 2) continue; // header pasti punya >= 2 kolom
+
+    let score = 0;
+    if (cells.some((c) => /\b(produk|nama|bahan|item|deskripsi)\b/.test(c))) score += 2;
+    if (cells.some((c) => /stok\s*akhir/.test(c))) score += 3;
+    if (cells.some((c) => /\b(kategori|category)\b/.test(c))) score += 1;
+    if (cells.some((c) => /\b(satuan|unit)\b/.test(c))) score += 1;
+    if (cells.some((c) => /stok\s*awal|masuk|keluar|penjualan/.test(c))) score += 1;
+    if (cells.some((c) => /\b(qty|jumlah|quantity)\b/.test(c))) score += 2;
+
+    if (score > bestScore) {
+      bestScore = score;
+      bestIdx = i;
+    }
+  }
+  return bestScore >= 2 ? bestIdx : 0;
+}
+
+/**
+ * Extract metadata dari rows di atas header — biasanya format "Label\tValue" per row.
+ * Contoh: ["Outlet", "Back To Mie Kitchen"] → metadata.outlet = "Back To Mie Kitchen"
+ */
+function extractMetadata(rowsAboveHeader: unknown[][]): ParseResult['metadata'] {
+  const meta: ParseResult['metadata'] = {};
+  for (const row of rowsAboveHeader) {
+    if (!Array.isArray(row)) continue;
+    const cells = row.map((c) => coerceString(c));
+    // Cari pasangan label-value: cell pertama yang non-null = label, cell kedua = value
+    const nonNull = cells
+      .map((c, i) => ({ c, i }))
+      .filter((x) => x.c != null);
+    if (nonNull.length < 2) continue;
+    const label = nonNull[0].c!.toLowerCase();
+    const value = nonNull[1].c!;
+    if (/outlet|cabang|store|toko/.test(label)) meta.outlet = value;
+    else if (/tanggal|date/.test(label)) meta.tanggal = value;
+    else if (/status\s*produk/.test(label)) meta.status_produk = value;
+    else if (/status\s*stock/.test(label)) meta.status_stock = value;
+  }
+  return meta;
+}
+
 export function parseOpnameWorkbook(buffer: ArrayBuffer): ParseResult {
   const warnings: string[] = [];
   let wb: XLSX.WorkBook;
@@ -87,8 +149,10 @@ export function parseOpnameWorkbook(buffer: ArrayBuffer): ParseResult {
     return {
       rows: [],
       detected_columns: {},
+      metadata: {},
       warnings: [`Gagal baca file: ${err instanceof Error ? err.message : 'unknown error'}`],
       total_data_rows: 0,
+      header_row_index: 0,
     };
   }
 
@@ -97,22 +161,52 @@ export function parseOpnameWorkbook(buffer: ArrayBuffer): ParseResult {
     return {
       rows: [],
       detected_columns: {},
+      metadata: {},
       warnings: ['File tidak punya sheet'],
       total_data_rows: 0,
+      header_row_index: 0,
     };
   }
   const sheet = wb.Sheets[sheetName];
-  const json = XLSX.utils.sheet_to_json<Record<string, unknown>>(sheet, {
+
+  // Step 1: Read raw 2D array untuk scan header row
+  const arrayJson = XLSX.utils.sheet_to_json<unknown[]>(sheet, {
+    header: 1,
     defval: null,
     raw: false,
+    blankrows: false,
+  });
+
+  if (arrayJson.length === 0) {
+    return {
+      rows: [],
+      detected_columns: {},
+      metadata: {},
+      warnings: ['File kosong (tidak ada baris)'],
+      total_data_rows: 0,
+      header_row_index: 0,
+    };
+  }
+
+  const headerRowIdx = findHeaderRow(arrayJson);
+  const metadata = extractMetadata(arrayJson.slice(0, headerRowIdx));
+
+  // Step 2: Re-parse dengan range mulai dari header row yang sebenarnya
+  const json = XLSX.utils.sheet_to_json<Record<string, unknown>>(sheet, {
+    range: headerRowIdx,
+    defval: null,
+    raw: false,
+    blankrows: false,
   });
 
   if (json.length === 0) {
     return {
       rows: [],
       detected_columns: {},
-      warnings: ['File kosong (tidak ada baris data)'],
+      metadata,
+      warnings: ['Tidak ada data setelah header (cek format file)'],
       total_data_rows: 0,
+      header_row_index: headerRowIdx + 1,
     };
   }
 
@@ -121,12 +215,17 @@ export function parseOpnameWorkbook(buffer: ArrayBuffer): ParseResult {
 
   if (!detected.qty) {
     warnings.push(
-      'Tidak bisa deteksi kolom qty (stok akhir/jumlah/qty). Pastikan ada kolom dengan nama seperti "Stok Akhir", "Qty", atau "Jumlah".',
+      `Tidak bisa deteksi kolom qty (stok akhir/jumlah/qty). Header yang terbaca: ${headers.slice(0, 10).join(', ')}`,
     );
   }
   if (!detected.id && !detected.name) {
     warnings.push(
-      'Tidak bisa deteksi kolom ID atau Nama bahan. Pastikan ada kolom seperti "Nama Produk", "SKU", atau "Kode".',
+      `Tidak bisa deteksi kolom ID atau Nama. Header yang terbaca: ${headers.slice(0, 10).join(', ')}`,
+    );
+  }
+  if (headerRowIdx > 0) {
+    warnings.push(
+      `Header data terdeteksi di baris Excel ${headerRowIdx + 1} (${headerRowIdx} baris metadata di-skip).`,
     );
   }
 
@@ -134,11 +233,12 @@ export function parseOpnameWorkbook(buffer: ArrayBuffer): ParseResult {
   for (let i = 0; i < json.length; i++) {
     const r = json[i];
     const row: ParsedOpnameRow = {
-      source_row: i + 2, // +2: row 1 = header, +1 untuk 1-indexed
+      // source_row: header di Excel = headerRowIdx+1, data row N (0-indexed) = headerRowIdx+2+N
+      source_row: headerRowIdx + 2 + i,
       source_id: detected.id ? coerceString(r[detected.id]) : null,
       source_name: detected.name ? coerceString(r[detected.name]) : null,
       source_qty: detected.qty ? coerceNumber(r[detected.qty]) : null,
-      source_outlet: detected.outlet ? coerceString(r[detected.outlet]) : null,
+      source_outlet: detected.outlet ? coerceString(r[detected.outlet]) : metadata.outlet ?? null,
     };
     rows.push(row);
   }
@@ -146,7 +246,9 @@ export function parseOpnameWorkbook(buffer: ArrayBuffer): ParseResult {
   return {
     rows,
     detected_columns: detected,
+    metadata,
     warnings,
     total_data_rows: json.length,
+    header_row_index: headerRowIdx + 1,
   };
 }
