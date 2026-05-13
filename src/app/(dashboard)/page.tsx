@@ -1,5 +1,6 @@
 import { createClient } from '@/lib/supabase/server';
 import { hasPermission, type Role } from '@/config/roles';
+import { AIPredictionWidget } from './ai-prediction-widget';
 import { DashboardCharts } from './dashboard-charts';
 import { DashboardStats } from './dashboard-stats';
 import { RecentPOTable, type RecentPORow } from './recent-po-table';
@@ -33,6 +34,7 @@ export default async function DashboardPage() {
     role = profile?.role ?? null;
   }
   const canViewNominal = hasPermission(role, 'dashboard.view_nominal');
+  const canUseAI = hasPermission(role, 'ai.predictions');
 
   // 2. Fetch transactions last 60 days dari latest available trx (data historis,
   //    bukan dari NOW). Server-side reduce ke aggregate per tujuan.
@@ -124,6 +126,8 @@ export default async function DashboardPage() {
         sessionSeries={sessionSeries}
         topMenu={topMenu}
       />
+
+      <AIPredictionWidget canViewNominal={canViewNominal} canUseAI={canUseAI} />
 
       <RecentPOTable rows={(recentPo ?? []) as unknown as RecentPORow[]} />
     </div>
