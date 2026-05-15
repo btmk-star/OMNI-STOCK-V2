@@ -60,21 +60,71 @@ function detectColumns(headers: string[]): ParseResult['detected_columns'] {
   return out;
 }
 
+/**
+ * Parse string angka dengan auto-detect locale (id-ID vs en-US).
+ *
+ * Aturan:
+ * - "12,00"     → 12      (ID decimal, comma + ≤2 digits)
+ * - "12.00"     → 12      (US decimal, dot + ≤2 digits)
+ * - "1.234"     → 1234    (ID thousand, dot + 3 digits)
+ * - "1,234"     → 1234    (US thousand, comma + 3 digits)
+ * - "1.234,56"  → 1234.56 (ID full, comma rightmost = decimal)
+ * - "1,234.56"  → 1234.56 (US full, dot rightmost = decimal)
+ * - "1.234.567" → 1234567 (ID thousand multi)
+ * - "1,234,567" → 1234567 (US thousand multi)
+ *
+ * Critical: "12,00" punya 2 digit setelah comma → decimal (12), bukan thousand (1200).
+ * Bug awal di parser: regex thousand-format gagal match "12,00", fallback strip comma → 1200.
+ */
+function parseLocaleNumber(s: string): number | null {
+  const cleaned = s.replace(/\s/g, '');
+  if (!cleaned) return null;
+
+  const hasDot = cleaned.includes('.');
+  const hasComma = cleaned.includes(',');
+
+  let normalized: string;
+
+  if (hasDot && hasComma) {
+    const lastDot = cleaned.lastIndexOf('.');
+    const lastComma = cleaned.lastIndexOf(',');
+    if (lastComma > lastDot) {
+      // ID: comma = decimal, dot = thousand → strip dots, replace comma
+      normalized = cleaned.replace(/\./g, '').replace(',', '.');
+    } else {
+      // US: dot = decimal, comma = thousand → strip commas
+      normalized = cleaned.replace(/,/g, '');
+    }
+  } else if (hasComma) {
+    const parts = cleaned.split(',');
+    if (parts.length === 2 && parts[1].length <= 2) {
+      // Decimal: "12,00" → 12, "4,5" → 4.5
+      normalized = parts[0] + '.' + parts[1];
+    } else {
+      // Thousand: "1,234" / "1,234,567" → strip
+      normalized = cleaned.replace(/,/g, '');
+    }
+  } else if (hasDot) {
+    const parts = cleaned.split('.');
+    if (parts.length === 2 && parts[1].length <= 2) {
+      // Decimal (US): "12.00" → 12, "12.5" → 12.5
+      normalized = cleaned;
+    } else {
+      // Thousand (ID): "12.000" / "1.234.567" → strip
+      normalized = cleaned.replace(/\./g, '');
+    }
+  } else {
+    normalized = cleaned;
+  }
+
+  const n = Number.parseFloat(normalized);
+  return Number.isFinite(n) ? n : null;
+}
+
 function coerceNumber(v: unknown): number | null {
   if (v == null || v === '') return null;
   if (typeof v === 'number') return Number.isFinite(v) ? v : null;
-  if (typeof v === 'string') {
-    // Handle "1.234,56" (id-ID) atau "1,234.56" (en-US) atau plain
-    const cleaned = v.replace(/\s/g, '');
-    // Indonesia format: dot = thousand separator, comma = decimal
-    if (/^-?\d{1,3}(\.\d{3})+(,\d+)?$/.test(cleaned)) {
-      const n = Number.parseFloat(cleaned.replace(/\./g, '').replace(',', '.'));
-      return Number.isFinite(n) ? n : null;
-    }
-    // US format atau plain
-    const n = Number.parseFloat(cleaned.replace(/,/g, ''));
-    return Number.isFinite(n) ? n : null;
-  }
+  if (typeof v === 'string') return parseLocaleNumber(v);
   return null;
 }
 
