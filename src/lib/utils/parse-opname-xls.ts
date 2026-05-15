@@ -169,12 +169,13 @@ export function parseOpnameWorkbook(buffer: ArrayBuffer): ParseResult {
   }
   const sheet = wb.Sheets[sheetName];
 
-  // Step 1: Read raw 2D array untuk scan header row
+  // Read sebagai 2D array dengan blank rows PRESERVED supaya index match dengan Excel rows.
+  // Penting: kalau blankrows: false (default lain), index ter-shift dan rusak header detection.
   const arrayJson = XLSX.utils.sheet_to_json<unknown[]>(sheet, {
     header: 1,
     defval: null,
     raw: false,
-    blankrows: false,
+    blankrows: true,
   });
 
   if (arrayJson.length === 0) {
@@ -191,36 +192,32 @@ export function parseOpnameWorkbook(buffer: ArrayBuffer): ParseResult {
   const headerRowIdx = findHeaderRow(arrayJson);
   const metadata = extractMetadata(arrayJson.slice(0, headerRowIdx));
 
-  // Step 2: Re-parse dengan range mulai dari header row yang sebenarnya
-  const json = XLSX.utils.sheet_to_json<Record<string, unknown>>(sheet, {
-    range: headerRowIdx,
-    defval: null,
-    raw: false,
-    blankrows: false,
-  });
-
-  if (json.length === 0) {
+  // Build header dari row yang ter-detect
+  const headerRow = arrayJson[headerRowIdx];
+  if (!Array.isArray(headerRow)) {
     return {
       rows: [],
       detected_columns: {},
       metadata,
-      warnings: ['Tidak ada data setelah header (cek format file)'],
+      warnings: ['Tidak bisa baca baris header'],
       total_data_rows: 0,
       header_row_index: headerRowIdx + 1,
     };
   }
-
-  const headers = Object.keys(json[0]).map(normalizeHeader);
+  const headers = headerRow.map((h, i) => {
+    const s = normalizeHeader(String(h ?? ''));
+    return s || `__col_${i}`;
+  });
   const detected = detectColumns(headers);
 
   if (!detected.qty) {
     warnings.push(
-      `Tidak bisa deteksi kolom qty (stok akhir/jumlah/qty). Header yang terbaca: ${headers.slice(0, 10).join(', ')}`,
+      `Tidak bisa deteksi kolom qty (stok akhir/jumlah/qty). Header yang terbaca: ${headers.filter((h) => !h.startsWith('__col_')).slice(0, 10).join(', ')}`,
     );
   }
   if (!detected.id && !detected.name) {
     warnings.push(
-      `Tidak bisa deteksi kolom ID atau Nama. Header yang terbaca: ${headers.slice(0, 10).join(', ')}`,
+      `Tidak bisa deteksi kolom ID atau Nama. Header yang terbaca: ${headers.filter((h) => !h.startsWith('__col_')).slice(0, 10).join(', ')}`,
     );
   }
   if (headerRowIdx > 0) {
@@ -229,18 +226,32 @@ export function parseOpnameWorkbook(buffer: ArrayBuffer): ParseResult {
     );
   }
 
+  // Index map: kolom name → kolom index
+  const colIdx = {
+    id: detected.id ? headers.indexOf(detected.id) : -1,
+    name: detected.name ? headers.indexOf(detected.name) : -1,
+    qty: detected.qty ? headers.indexOf(detected.qty) : -1,
+    outlet: detected.outlet ? headers.indexOf(detected.outlet) : -1,
+  };
+
   const rows: ParsedOpnameRow[] = [];
-  for (let i = 0; i < json.length; i++) {
-    const r = json[i];
-    const row: ParsedOpnameRow = {
-      // source_row: header di Excel = headerRowIdx+1, data row N (0-indexed) = headerRowIdx+2+N
-      source_row: headerRowIdx + 2 + i,
-      source_id: detected.id ? coerceString(r[detected.id]) : null,
-      source_name: detected.name ? coerceString(r[detected.name]) : null,
-      source_qty: detected.qty ? coerceNumber(r[detected.qty]) : null,
-      source_outlet: detected.outlet ? coerceString(r[detected.outlet]) : metadata.outlet ?? null,
-    };
-    rows.push(row);
+  let dataRowsCount = 0;
+  for (let i = headerRowIdx + 1; i < arrayJson.length; i++) {
+    const r = arrayJson[i];
+    if (!Array.isArray(r)) continue;
+    // Skip baris yang semua cell-nya null/empty
+    const hasContent = r.some((c) => c != null && String(c).trim() !== '');
+    if (!hasContent) continue;
+    dataRowsCount += 1;
+
+    rows.push({
+      source_row: i + 1, // 1-indexed Excel row
+      source_id: colIdx.id >= 0 ? coerceString(r[colIdx.id]) : null,
+      source_name: colIdx.name >= 0 ? coerceString(r[colIdx.name]) : null,
+      source_qty: colIdx.qty >= 0 ? coerceNumber(r[colIdx.qty]) : null,
+      source_outlet:
+        colIdx.outlet >= 0 ? coerceString(r[colIdx.outlet]) : metadata.outlet ?? null,
+    });
   }
 
   return {
@@ -248,7 +259,7 @@ export function parseOpnameWorkbook(buffer: ArrayBuffer): ParseResult {
     detected_columns: detected,
     metadata,
     warnings,
-    total_data_rows: json.length,
+    total_data_rows: dataRowsCount,
     header_row_index: headerRowIdx + 1,
   };
 }
